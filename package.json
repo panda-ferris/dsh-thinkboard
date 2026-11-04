@@ -23,7 +23,8 @@
     "test": "node --test --test-timeout=20000 test/",
     "e2e": "node e2e/run.mjs && node e2e/panel.mjs && node e2e/sandbox-check.mjs",
     "verify": "node scripts/verify-dist.mjs",
-    "check": "npm test && npm run build && npm run verify"
+    "check": "npm test && npm run build && npm run verify",
+    "index": "node scripts/make-index.mjs"
   },
   "author": "panda-ferris",
   "repository": {
