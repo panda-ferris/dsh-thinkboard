@@ -1,0 +1,11 @@
+node_modules/
+e2e/out/
+*.log
+.DS_Store
+# dist/ 是构建产物,但**要提交**:插件市场按 Git 提交安装它(用户机器上不需要构建环境)。
+# 因此这里刻意不忽略 dist/。
+
+# 不公开:内部研发计划、早期探索代码(含本机路径)、锁文件(dist 自包含,使用者不需要)
+docs/ROADMAP.md
+spike/
+package-lock.json

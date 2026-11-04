@@ -1,0 +1,50 @@
+{
+  "name": "dsh-thinkboard",
+  "version": "0.1.0",
+  "type": "module",
+  "devDependencies": {
+    "@tiptap/core": "3.32.2",
+    "@tiptap/extension-image": "3.32.2",
+    "@tiptap/extension-table": "3.32.2",
+    "@tiptap/extension-task-item": "3.32.2",
+    "@tiptap/extension-task-list": "3.32.2",
+    "@tiptap/markdown": "3.32.2",
+    "@tiptap/pm": "3.32.2",
+    "@tiptap/react": "3.32.2",
+    "@tiptap/starter-kit": "3.32.2",
+    "esbuild": "0.28.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "description": "ThinkBoard for DeepSeek Harness: an infinite canvas for Markdown and image cards, frames, flowchart shapes, and labeled connections. Boards are plain JSON files, and the built-in chat agent can read and edit them.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test --test-timeout=20000 test/",
+    "e2e": "node e2e/run.mjs && node e2e/panel.mjs && node e2e/sandbox-check.mjs",
+    "verify": "node scripts/verify-dist.mjs",
+    "check": "npm test && npm run build && npm run verify"
+  },
+  "author": "panda-ferris",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/panda-ferris/dsh-thinkboard.git"
+  },
+  "homepage": "https://github.com/panda-ferris/dsh-thinkboard#readme",
+  "bugs": {
+    "url": "https://github.com/panda-ferris/dsh-thinkboard/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "whiteboard",
+    "canvas",
+    "board",
+    "flowchart",
+    "markdown",
+    "knowledge-management"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.1 <0.2.2-0"
+  }
+}
