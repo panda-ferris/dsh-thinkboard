@@ -244,7 +244,8 @@
 .wb-quick-right{top:50%;right:-34px;margin-top:-9px}
 
 /* 左侧竖向工具栏 */
-.wb-lefttool{position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:28;display:flex;flex-direction:column;gap:2px;padding:6px;
+.wb-lefttool-wrap{position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:28;max-height:calc(100% - 24px)}
+.wb-lefttool{display:flex;flex-direction:column;gap:2px;padding:6px;max-height:calc(100vh - 140px);overflow-y:auto;scrollbar-width:none;
   background:var(--dsw-alias-bg-overlay);border:1px solid var(--wb-line);border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.15)}
 .wb-lt-btn{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:none;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer}
 .wb-lt-btn:hover{background:var(--dsw-alias-bg-layer-2)}
@@ -333,3 +334,9 @@
 .wb-minimap-close{position:absolute;right:3px;top:3px;width:18px;height:18px;border:none;border-radius:9px;padding:0;font:600 13px/18px system-ui,sans-serif;text-align:center;
   background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-secondary);cursor:pointer;opacity:0;transition:opacity .12s}
 .wb-minimap:hover .wb-minimap-close,.wb-minimap-close:focus-visible{opacity:1}
+
+/* 拖入框时框实时长大:不要过渡动画,否则看起来滞后于鼠标 */
+.wb-group.is-drop{transition:none}
+
+.wb-lt-btn:disabled{opacity:.35;cursor:default}
+.wb-lt-btn:disabled:hover{background:transparent}

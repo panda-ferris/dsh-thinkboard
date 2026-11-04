@@ -59,6 +59,7 @@ export function apply(ctx) {
 }
 
 const ZH = {
+  'tool.panel': '工具栏', 'tool.zoom': '缩放比例',
   'title.edit': '白板标题', 'title.hint': '双击修改标题', 'minimap.open': '展开小地图', 'minimap.close': '收起小地图',
   'cluster.group': '组合', 'cluster.ungroup': '取消组合', 'cluster.enter': '双击进入组合',
   'node.groupPlaceholder': '框标题(点击编辑)', 'node.groupEditHint': '双击编辑标题', 'node.groupCount': '框内有 {count} 个元素', 'node.dropHint': '松手放入框中({count})', 'node.leaveHint': '松手移出框',
@@ -95,6 +96,7 @@ const ZH = {
   'chat.contextHeader': '白板「{board}」(id: {id})中我选中的元素:',
 }
 const EN = {
+  'tool.panel': 'Toolbar', 'tool.zoom': 'Zoom level',
   'title.edit': 'Board title', 'title.hint': 'Double-click to rename', 'minimap.open': 'Show minimap', 'minimap.close': 'Hide minimap',
   'cluster.group': 'Group', 'cluster.ungroup': 'Ungroup', 'cluster.enter': 'Double-click to enter the group',
   'node.groupPlaceholder': 'Frame title (click to edit)', 'node.groupEditHint': 'Double-click to edit the title', 'node.groupCount': '{count} items in this frame', 'node.dropHint': 'Release to add to the frame ({count})', 'node.leaveHint': 'Release to remove from the frame',

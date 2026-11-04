@@ -187,74 +187,22 @@ function ContextMenu({ menu, items, onClose, t }) {
     items.map((it) => h('button', { key: it.label, className: 'wb-menu-item' + (it.danger ? ' is-danger' : ''), onClick: () => { onClose(); it.run() } }, it.label)))
 }
 
+/**
+ * 顶栏(低频项):搜索、导出、缩放比例。
+ * 添加元素与撤销/重做/适配视图在画布左侧的工具栏里(常用,离画布近)。
+ */
 export function Toolbar({ store, state, transport, t, onSearch }) {
-  const { board, selection, edgeSelection, viewport } = state
-  const fileRef = React.useRef(null)
-  const sel = board.nodes.filter((n) => selection.includes(n.id))
-  const addCenter = () => {
-    const root = document.querySelector('.wb-canvas')?.getBoundingClientRect()
-    const v = viewport
-    const cx = root ? (root.width / 2 - v.x) / v.k : 0
-    const cy = root ? (root.height / 2 - v.y) / v.k : 0
-    return { cx, cy }
-  }
-  const addCard = () => {
-    const { cx, cy } = addCenter()
-    const id = 'n' + Math.random().toString(36).slice(2, 9)
-    store.dispatch([{ op: 'addNode', node: { id, type: 'text', x: Math.round(cx - 160), y: Math.round(cy - 100), text: '' } }])
-    store.select([id]); store.setEditing(id)
-  }
-  const addHtml = () => {
-    const { cx, cy } = addCenter()
-    const id = 'n' + Math.random().toString(36).slice(2, 9)
-    store.dispatch([{ op: 'addNode', node: { id, type: 'html', x: Math.round(cx - 200), y: Math.round(cy - 150), width: 400, height: 300, html: '' } }])
-    store.select([id]); store.setEditing(id)
-  }
-  const addGroup = () => {
-    const { cx, cy } = addCenter()
-    const sel2 = sel.filter((n) => n.type !== 'group')
-    let node
-    if (sel2.length) {
-      const x = Math.min(...sel2.map((n) => n.x)) - 32, y = Math.min(...sel2.map((n) => n.y)) - 56
-      const x2 = Math.max(...sel2.map((n) => n.x + n.width)) + 32, y2 = Math.max(...sel2.map((n) => n.y + n.height)) + 32
-      node = { type: 'group', x: Math.round(x), y: Math.round(y), width: Math.round(x2 - x), height: Math.round(y2 - y), label: '', color: 'blue' }
-    } else node = { type: 'group', x: Math.round(cx - 240), y: Math.round(cy - 160), width: 480, height: 320, label: '', color: 'blue' }
-    const id = 'g' + Math.random().toString(36).slice(2, 9)
-    store.dispatch([{ op: 'addNode', node: { ...node, id } }])
-    store.select([id])
-  }
-  const pickImage = async (e) => {
-    const files = [...e.target.files]
-    e.target.value = ''
-    const { cx, cy } = addCenter()
-    for (const f of files) {
-      try {
-        const file = await transport.uploadImage(board.id, f)
-        const dim = await new Promise((res) => { const u = URL.createObjectURL(f); const i = new Image(); i.onload = () => { res({ w: i.naturalWidth, h: i.naturalHeight }); URL.revokeObjectURL(u) }; i.onerror = () => res({ w: 320, h: 200 }); i.src = u })
-        const { width: w, height: hgt } = initialImageSize({ w: dim.w, h: dim.h })
-        store.dispatch([{ op: 'addNode', node: { type: 'image', file, natural: { w: dim.w, h: dim.h }, x: Math.round(cx - w / 2), y: Math.round(cy - hgt / 2), width: w, height: hgt } }])
-      } catch (err) { store.fail(err) }
-    }
-  }
+  const { board, viewport } = state
   return h('div', { className: 'wb-tools' },
-    h('button', { className: 'wb-btn', onClick: addCard }, t('tool.card')),
-    h('button', { className: 'wb-btn', onClick: () => fileRef.current.click() }, t('tool.image')),
-    h('input', { ref: fileRef, type: 'file', accept: 'image/*', multiple: true, hidden: true, onChange: pickImage }),
-    h('button', { className: 'wb-btn', title: t('tool.htmlHint'), onClick: addHtml }, t('tool.html')),
-    h('button', { className: 'wb-btn', onClick: addGroup }, t('tool.group')),
-    h('span', { className: 'wb-sep' }),
-    h('button', { className: 'wb-btn wb-btn-icon', title: t('search.open'), 'aria-label': t('search.open'), onClick: onSearch }, h(Icon, { name: 'search' })),
-    h('button', { className: 'wb-btn wb-btn-icon', title: t('tool.undo'), disabled: !state.canUndo, onClick: store.undo }, '↶'),
-    h('button', { className: 'wb-btn wb-btn-icon', title: t('tool.redo'), disabled: !state.canRedo, onClick: store.redo }, '↷'),
-    h('button', { className: 'wb-btn', onClick: () => fit(store, state) }, t('tool.fit')),
+    h('button', { className: 'wb-btn wb-btn-icon', title: t('search.open') + ' (⌘F)', 'aria-label': t('search.open'), onClick: onSearch }, h(Icon, { name: 'search' })),
     h('button', { className: 'wb-btn', title: t('tool.export'), disabled: !board.nodes.length, onClick: async () => {
       try {
         const world = document.querySelector('.wb-world')
         const blob = await renderPng(world, board, { background: resolveBackground(document.querySelector('.wb-stage') || document.body) })
-        download(blob, `${(board.title || 'whiteboard').replace(/[\\/:*?"<>|]+/g, '_')}.png`)
+        download(blob, `${(board.title || 'board').replace(/[\\/:*?"<>|]+/g, '_')}.png`)
       } catch (e) { store.fail(e) }
     } }, t('tool.export')),
-    h('span', { className: 'wb-zoom' }, Math.round(viewport.k * 100) + '%'))
+    h('span', { className: 'wb-zoom', title: t('tool.zoom') }, Math.round(viewport.k * 100) + '%'))
 }
 
 function fit(store, state) {

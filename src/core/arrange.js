@@ -177,3 +177,70 @@ function containingNow(g, n) {
 export function memberCount(board, group) {
   return containedBy(board, group).length
 }
+
+// ---------------- 拖入框时的自适应 ----------------
+/**
+ * 一批节点(已含位移 dx/dy)落进框 frame 时,框需要长成多大才能完整容纳它们。
+ *
+ * 规则(为了拖动时不抖、不伤害别的元素):
+ *   - 只增不缩:框永远不会因为拖入而变小。
+ *   - 只向"需要"的方向扩:哪一侧装不下就扩哪一侧,其余边保持原位。
+ *   - 留出 padding;顶部额外留出标题栏高度,卡片不会压在标题上。
+ *   - 不"吞"别人:归属由中心点决定,框一长大,框外邻居的中心可能落进来,变成意外成员。
+ *     传入 bystanders(不是被拖元素、且当前不在框内的节点)时,扩张会在碰到它们的中心点之前停下;
+ *     此时框装不下被拖元素的全部,返回的矩形仍覆盖被拖元素的**中心点**(归属一致),只是不再完整包住。
+ * 返回 { x, y, width, height },或 null(不需要扩)。
+ */
+export function growFrameToFit(frame, movedRects, { padding = 24, titleHeight = 44, bystanders = [] } = {}) {
+  if (!movedRects.length) return null
+  let L = Math.min(...movedRects.map((r) => r.x)) - padding
+  let T = Math.min(...movedRects.map((r) => r.y)) - titleHeight
+  let R = Math.max(...movedRects.map((r) => r.x + r.width)) + padding
+  let B = Math.max(...movedRects.map((r) => r.y + r.height)) + padding
+  let x = Math.min(frame.x, L), y = Math.min(frame.y, T)
+  let x2 = Math.max(frame.x + frame.width, R), y2 = Math.max(frame.y + frame.height, B)
+
+  if (bystanders.length) {
+    // 被拖元素的中心点必须被框覆盖(否则拖入就无意义);这是扩张的"下限"
+    const cxs = movedRects.map((r) => r.x + r.width / 2), cys = movedRects.map((r) => r.y + r.height / 2)
+    const needL = Math.min(frame.x, ...cxs), needT = Math.min(frame.y, ...cys)
+    const needR = Math.max(frame.x + frame.width, ...cxs), needB = Math.max(frame.y + frame.height, ...cys)
+    const hits = (b, l, t, r, bt) => { const cx = b.x + b.width / 2, cy = b.y + b.height / 2; return cx >= l && cx <= r && cy >= t && cy <= bt }
+    const before = (b) => hits(b, frame.x, frame.y, frame.x + frame.width, frame.y + frame.height)
+    const outsiders = bystanders.filter((b) => !before(b))
+    // 逐边回退:先试完整扩张;若吞了邻居,把该边收缩到"刚好不吞"且不小于下限
+    const swallowed = () => outsiders.filter((b) => hits(b, x, y, x2, y2))
+    for (const side of ['right', 'bottom', 'left', 'top']) {
+      for (let guard = 0; guard < 40 && swallowed().length; guard++) {
+        const sw = swallowed()
+        if (side === 'right' && x2 > needR) x2 = Math.max(needR, Math.min(x2, ...sw.map((b) => b.x + b.width / 2 - 1)))
+        else if (side === 'bottom' && y2 > needB) y2 = Math.max(needB, Math.min(y2, ...sw.map((b) => b.y + b.height / 2 - 1)))
+        else if (side === 'left' && x < needL) x = Math.min(needL, Math.max(x, ...sw.map((b) => b.x + b.width / 2 + 1)))
+        else if (side === 'top' && y < needT) y = Math.min(needT, Math.max(y, ...sw.map((b) => b.y + b.height / 2 + 1)))
+        else break
+      }
+    }
+  }
+  if (x === frame.x && y === frame.y && x2 === frame.x + frame.width && y2 === frame.y + frame.height) return null
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(x2 - x), height: Math.round(y2 - y) }
+}
+
+/** 框外的"旁观者":既不是被拖元素、也不是框本身、当前也不在框内的节点(框扩张时要避免吞掉它们)。 */
+export function bystandersOf(board, frame, movedIds) {
+  const moved = new Set(movedIds)
+  return board.nodes.filter((n) => n.type !== 'group' && !moved.has(n.id) && n.id !== frame.id)
+    .map((n) => ({ x: n.x, y: n.y, width: n.width, height: n.height }))
+}
+
+/**
+ * 拖动结束时,把落入的节点都装进目标框:框先扩大,再产出 ops。
+ * 框外邻居不会被顺带吞进来;框内已有元素保持不动(框只向外长,所以它们仍在框内)。
+ */
+export function dropIntoFrameOps(board, frameId, movedIds, dx, dy, opts) {
+  const frame = board.nodes.find((n) => n.id === frameId && n.type === 'group')
+  if (!frame) return []
+  const set = new Set(movedIds)
+  const rects = board.nodes.filter((n) => set.has(n.id) && n.type !== 'group').map((n) => ({ x: n.x + dx, y: n.y + dy, width: n.width, height: n.height }))
+  const grown = growFrameToFit(frame, rects, { ...opts, bystanders: bystandersOf(board, frame, movedIds) })
+  return grown ? [{ op: 'updateNode', id: frame.id, patch: grown }] : []
+}

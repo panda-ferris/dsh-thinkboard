@@ -178,3 +178,93 @@ test('memberCount: 只数卡片/图形,不数框', () => {
   assert.equal(memberCount(b, b.nodes.find((n) => n.id === 'g1')), 1) // 只有 in 的中心在 g1 内;g2 是框不数;c、d 在框外
   assert.equal(memberCount(b, b.nodes.find((n) => n.id === 'g2')), 0)
 })
+
+import { growFrameToFit, dropIntoFrameOps } from '../src/core/arrange.js'
+
+const FR = { x: 100, y: 100, width: 400, height: 300 }
+
+test('growFrameToFit: 已装得下 → 不变(null)', () => {
+  assert.equal(growFrameToFit(FR, [{ x: 150, y: 160, width: 100, height: 60 }]), null)
+})
+
+test('growFrameToFit: 只向需要的方向扩,其余边不动', () => {
+  const g = growFrameToFit(FR, [{ x: 450, y: 160, width: 100, height: 60 }])   // 右边超出
+  assert.equal(g.x, 100); assert.equal(g.y, 100); assert.equal(g.height, 300)
+  assert.equal(g.x + g.width, 574)                                              // 550 + padding 24
+})
+
+test('growFrameToFit: 向上扩时留出标题栏高度,卡片不会压在标题上', () => {
+  const g = growFrameToFit(FR, [{ x: 150, y: 40, width: 100, height: 60 }])
+  assert.equal(g.y, 40 - 44)                                                    // 卡片顶边之上 44px 给标题
+  assert.equal(g.y + g.height, 400)                                             // 下沿保持
+})
+
+test('growFrameToFit: 只增不缩——拖入一张小卡片,框不会变小', () => {
+  const g = growFrameToFit(FR, [{ x: 480, y: 380, width: 60, height: 40 }])
+  assert.ok(g.x <= FR.x && g.y <= FR.y && g.x + g.width >= FR.x + FR.width && g.y + g.height >= FR.y + FR.height)
+})
+
+test('growFrameToFit: 多个元素取并集;左上同时超出两个方向', () => {
+  const g = growFrameToFit(FR, [{ x: 20, y: 30, width: 80, height: 50 }, { x: 600, y: 500, width: 80, height: 50 }])
+  assert.equal(g.x, 20 - 24); assert.equal(g.y, 30 - 44)
+  assert.equal(g.x + g.width, 680 + 24); assert.equal(g.y + g.height, 550 + 24)
+})
+
+test('growFrameToFit: 空输入 → null', () => { assert.equal(growFrameToFit(FR, []), null) })
+
+test('dropIntoFrameOps: 框扩大,被拖节点本身不动;框内已有元素不受影响', () => {
+  const b = make(
+    { op: 'addNode', node: { id: 'F', type: 'group', ...FR } },
+    T('old', 150, 160, 100, 60), T('mv', 700, 200, 100, 60),
+  )
+  const ops = dropIntoFrameOps(b, 'F', ['mv'], -200, 0)       // mv 落到 x=500..600,超出框右边 500
+  assert.equal(ops.length, 1); assert.equal(ops[0].op, 'updateNode'); assert.equal(ops[0].id, 'F')
+  const r = applyOps(b, ops).board
+  const f = r.nodes.find((n) => n.id === 'F')
+  assert.ok(f.x + f.width >= 600 + 24)
+  assert.deepEqual(r.nodes.find((n) => n.id === 'old').x, 150)  // 没动
+})
+
+test('dropIntoFrameOps: 框本身被拖动、非框目标、已装得下 → 没有操作', () => {
+  const b = make({ op: 'addNode', node: { id: 'F', type: 'group', ...FR } }, T('a', 150, 160, 100, 60))
+  assert.deepEqual(dropIntoFrameOps(b, 'F', ['a'], 10, 10), [])
+  assert.deepEqual(dropIntoFrameOps(b, 'nope', ['a'], 0, 0), [])
+  assert.deepEqual(dropIntoFrameOps(b, 'F', [], 0, 0), [])
+})
+
+test('dropIntoFrameOps: 框被扩大后,拖入的节点中心确实在框内(归属一致)', () => {
+  const b = make({ op: 'addNode', node: { id: 'F', type: 'group', ...FR } }, T('mv', 700, 200, 100, 60))
+  const moved = applyOps(b, [{ op: 'moveNodes', ids: ['mv'], dx: -230, dy: 0 }, ...dropIntoFrameOps(b, 'F', ['mv'], -230, 0)]).board
+  const f = moved.nodes.find((n) => n.id === 'F'), m = moved.nodes.find((n) => n.id === 'mv')
+  const cx = m.x + m.width / 2, cy = m.y + m.height / 2
+  assert.ok(cx >= f.x && cx <= f.x + f.width && cy >= f.y && cy <= f.y + f.height)
+  assert.ok(m.x + m.width <= f.x + f.width && m.x >= f.x && m.y >= f.y && m.y + m.height <= f.y + f.height, '整张卡片都在框内,而不仅是中心')
+})
+
+import { containedBy } from '../src/core/ops.js'
+
+test('框扩张不吞掉框外的邻居(邻居的中心点不能因此落进框)', () => {
+  const b = make(
+    { op: 'addNode', node: { id: 'F', type: 'group', ...FR } },
+    T('in', 150, 160, 100, 60), T('mv', 700, 200, 100, 60), T('near', 520, 180, 100, 60),
+  )
+  const ops = dropIntoFrameOps(b, 'F', ['mv'], -200, 0)
+  const r = applyOps(b, [{ op: 'moveNodes', ids: ['mv'], dx: -200, dy: 0 }, ...ops]).board
+  const members = containedBy(r, r.nodes.find((n) => n.id === 'F')).map((n) => n.id).sort()
+  assert.deepEqual(members, ['in', 'mv'])
+})
+
+test('框扩张:被拖元素的中心点始终在框内(归属以中心点为准)', () => {
+  const b = make({ op: 'addNode', node: { id: 'F', type: 'group', ...FR } }, T('mv', 700, 200, 200, 60), T('near', 520, 180, 100, 60))
+  const r = applyOps(b, [{ op: 'moveNodes', ids: ['mv'], dx: -230, dy: 0 }, ...dropIntoFrameOps(b, 'F', ['mv'], -230, 0)]).board
+  const f = r.nodes.find((n) => n.id === 'F'), m = r.nodes.find((n) => n.id === 'mv')
+  const cx = m.x + m.width / 2, cy = m.y + m.height / 2
+  assert.ok(cx >= f.x && cx <= f.x + f.width && cy >= f.y && cy <= f.y + f.height)
+})
+
+test('框扩张:没有邻居阻挡时仍完整包住(行为与无邻居版本一致)', () => {
+  const b = make({ op: 'addNode', node: { id: 'F', type: 'group', ...FR } }, T('mv', 700, 200, 100, 60))
+  const r = applyOps(b, [{ op: 'moveNodes', ids: ['mv'], dx: -200, dy: 0 }, ...dropIntoFrameOps(b, 'F', ['mv'], -200, 0)]).board
+  const f = r.nodes.find((n) => n.id === 'F'), m = r.nodes.find((n) => n.id === 'mv')
+  assert.ok(m.x >= f.x && m.x + m.width <= f.x + f.width && m.y >= f.y && m.y + m.height <= f.y + f.height)
+})

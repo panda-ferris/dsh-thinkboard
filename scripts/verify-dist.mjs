@@ -83,6 +83,18 @@ const requires = [...client.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)].map(
 const outsiders = [...new Set(requires)].filter((r) => !['react', 'react-dom', 'react/jsx-runtime'].includes(r))
 outsiders.length ? bad(`client.js 还在 require 未打包的模块:${outsiders.join(', ')}`) : ok('client.js 只依赖 dsh 提供的 react')
 
+// ---- 4b. 旧名残留:插件改名后,发布包里不应再注册旧标识(否则用户机器上会出现两个入口)----
+const legacy = ['whiteboard.chat', 'dsh.whiteboard.', "key: 'whiteboard'", '/api/whiteboard']
+for (const f of files.filter((x) => x.endsWith('.js'))) {
+  const src = await readFile(f, 'utf8')
+  for (const needle of legacy) {
+    // dsh.whiteboard. 只允许出现在"旧键迁移"代码里(storage.js 的常量),不能被用作真正的存储键
+    if (needle === 'dsh.whiteboard.' && src.split(needle).length - 1 <= 1) continue
+    if (src.includes(needle)) bad(`${relative(dist, f)} 还含旧标识 "${needle}"`)
+  }
+}
+ok('发布包没有注册旧名标识')
+
 // ---- 5. 体积 ----
 const size = (await Promise.all(files.map(async (f) => (await stat(f)).size))).reduce((a, b) => a + b, 0)
 console.log(`体积 ${(size / 1024).toFixed(0)} KB`)

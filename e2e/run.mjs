@@ -255,7 +255,7 @@ try {
   console.log('排版:多选对齐 / 分布 / 成框 / 适配')
   const T = (id, x, y, w = 120, h = 70, extra = {}) => ({ id, type: 'text', x, y, width: w, height: h, text: id, ...extra })
   const reset = async (nodes, edges) => { await ev(`window.__wb.reset(${JSON.stringify(nodes)}, ${JSON.stringify(edges || [])})`); await sleep(150); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(50) }
-  const btn = (title) => ev(`(()=>{const b=[...document.querySelectorAll('.wb-toolbar button,.wb-ctxbar button')].find(x=>x.title==='${title}'||x.textContent==='${title}');if(!b)return null;if(b.disabled)return 'disabled';b.click();return 'ok'})()`)
+  const btn = (title) => ev(`(()=>{const b=[...document.querySelectorAll('.wb-toolbar button,.wb-ctxbar button,.wb-lefttool button')].find(x=>x.title==='${title}'||x.textContent==='${title}');if(!b)return null;if(b.disabled)return 'disabled';b.click();return 'ok'})()`)
   const ys = async (...ids) => { const b = await board(); return ids.map((i) => b.nodes.find((n) => n.id === i)) }
 
   await reset([T('p', 100, 100), T('q', 400, 160), T('r', 700, 130)])
@@ -472,8 +472,8 @@ try {
     check('清空说明会删除该字段', !('caption' in (await board()).nodes[0])) }
   // 替换图片
   await ev(`window.__wb.store.select(['im1'])`); await sleep(150)
-  check('点"替换图片"会打开文件选择', await ev(`(()=>{let clicked=false;const inp=document.querySelector('.wb-canvas-host input[type=file]');inp.addEventListener('click',()=>{clicked=true},{once:true});document.querySelector('.wb-ctxbar button[title="image.replace"]').click();return clicked})()`))
-  await ev(`(()=>{const inp=document.querySelector('.wb-canvas-host input[type=file]');const dt=new DataTransfer();dt.items.add(new File([new Uint8Array(8)],'wide.png',{type:'image/png'}));inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}))})()`); await sleep(500)
+  check('点"替换图片"会打开文件选择', await ev(`(()=>{let clicked=false;const inp=document.querySelector('input[data-wb-replace-image]');inp.addEventListener('click',()=>{clicked=true},{once:true});document.querySelector('.wb-ctxbar button[title="image.replace"]').click();return clicked})()`))
+  await ev(`(()=>{const inp=document.querySelector('input[data-wb-replace-image]');const dt=new DataTransfer();dt.items.add(new File([new Uint8Array(8)],'wide.png',{type:'image/png'}));inp.files=dt.files;inp.dispatchEvent(new Event('change',{bubbles:true}))})()`); await sleep(500)
   { const n = (await board()).nodes[0]
     check('替换后文件已更换且保持宽度', n.file === 'assets/wide.png' && n.width === 200, JSON.stringify([n.file, n.width, n.height]))
     check('替换后高度/原始尺寸按新图重算', n.natural && n.natural.w > 0 && n.height === Math.round(200 * n.natural.h / n.natural.w) || n.height > 0, JSON.stringify([n.natural, n.height])) }
@@ -518,7 +518,7 @@ try {
   await ev(`window.__wb.store.setEditing(null)`)
   // 工具条按钮
   await reset([]); await sleep(150)
-  check('顶栏有"+ HTML"按钮,点击新建并进入编辑', await (async () => { await btn('tool.html'); await sleep(250); const b = await board(); return b.nodes.length === 1 && b.nodes[0].type === 'html' && (await ev('window.__wb.store.getState().editing')) === b.nodes[0].id })())
+  check('左侧栏的 HTML 按钮:点击新建并进入编辑', await (async () => { await btn('tool.htmlHint'); await sleep(250); const b = await board(); return b.nodes.length === 1 && b.nodes[0].type === 'html' && (await ev('window.__wb.store.getState().editing')) === b.nodes[0].id })())
   // 导出含 HTML/图片
   await reset([IMG('ex1'), { id: 'ex2', type: 'html', x: 500, y: 200, width: 300, height: 200, html: '<h2>导出测试</h2>' }]); await sleep(500)
   { const r = await ev(`(async()=>{try{const blob=await window.__wb.renderPng(document.querySelector('.wb-world'),window.__wb.store.getState().board,{background:'#fff',scale:1});return {ok:true,size:blob.size,type:blob.type}}catch(e){return {ok:false,err:String(e.message)}}})()`)
@@ -1394,6 +1394,134 @@ try {
     await mouse('mousePressed', b2.x, b2.y); await mouse('mouseReleased', b2.x, b2.y); await sleep(150)
     check('点击折叠按钮不会取消画布上的选择', (await ev('window.__wb.store.getState().selection[0]')) === 'mm1')
     await ev(`document.querySelector('.wb-minimap-close')?.click()`) }
+
+  console.log('菜单整合:左侧栏(添加 + 操作),顶栏只留低频项')
+  await reset([T('mt1', 100, 100)]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250)
+  { const topBtns = await ev(`[...document.querySelectorAll('.wb-toolbar .wb-tools button')].map(b=>b.getAttribute('aria-label')||b.title||b.textContent)`)
+    check('顶栏只剩 搜索 / 导出(低频项)', JSON.stringify(topBtns) === JSON.stringify(['search.open', 'tool.export']), JSON.stringify(topBtns))
+    check('顶栏不再有 添加卡片/图片/HTML/框、撤销重做、适应画面', !(await ev(`[...document.querySelectorAll('.wb-toolbar button')].some(b=>/tool\\.(card|image|html|group|undo|redo|fit)$/.test(b.title||'')||/^(\\+ |↶|↷)/.test(b.textContent))`)))
+    check('顶栏显示缩放比例', (await ev(`document.querySelector('.wb-toolbar .wb-zoom')?.textContent`)) === '100%')
+    const left = await ev(`[...document.querySelectorAll('.wb-lefttool button')].map(b=>b.getAttribute('aria-label'))`)
+    check('左栏包含 选择/图形/文本/卡片/图片/HTML/框/撤销/重做/适应画面', ['tool.select', 'tool.shape', 'tool.textBox', 'tool.cardTool', 'tool.image', 'tool.htmlHint', 'tool.group'].every((k) => left.includes(k)) && left.some((k) => k.startsWith('tool.undo')) && left.some((k) => k.startsWith('tool.redo')) && left.includes('tool.fit'), JSON.stringify(left))
+    check('左栏按用途分成三组(选择 / 添加 / 操作),组间有分隔线', (await ev(`document.querySelectorAll('.wb-lefttool .wb-lt-sep').length`)) === 2)
+    check('左栏是 toolbar 语义(可访问)', await ev(`(()=>{const e=document.querySelector('.wb-lefttool');return e.getAttribute('role')==='toolbar'&&e.getAttribute('aria-orientation')==='vertical'})()`)) }
+  // 添加:图片(通过文件选择器)
+  { await ev(`window.__wb.store.select([])`)
+    check('左栏图片按钮会打开文件选择(有隐藏的 file input 接收)', await ev(`(()=>{const i=document.querySelector('input[data-wb-add-image]');return !!i&&i.type==='file'&&i.multiple&&i.accept==='image/*'})()`))
+    const before = (await board()).nodes.length
+    await ev(`(()=>{const i=document.querySelector('input[data-wb-add-image]');const dt=new DataTransfer();dt.items.add(new File([new Uint8Array([1,2,3])],'wide.png',{type:'image/png'}));i.files=dt.files;i.dispatchEvent(new Event('change',{bubbles:true}))})()`); await sleep(600)
+    const nb = await board(); const img = nb.nodes.find((n) => n.type === 'image')
+    check('选择图片后:在当前视图中心新增图片卡片', nb.nodes.length === before + 1 && !!img && img.file === 'assets/wide.png', JSON.stringify(img)) }
+  // 添加:HTML、框、卡片
+  await reset([]); await sleep(150)
+  await ev(`document.querySelector('.wb-lefttool button[aria-label="tool.htmlHint"]').click()`); await sleep(250)
+  { const b = await board(); check('左栏 HTML:新建 HTML 卡片并进入编辑', b.nodes.length === 1 && b.nodes[0].type === 'html' && (await ev('window.__wb.store.getState().editing')) === b.nodes[0].id)
+    await ev(`window.__wb.store.setEditing(null)`) }
+  await reset([]); await sleep(150)
+  await ev(`document.querySelector('.wb-lefttool button[aria-label="tool.group"]').click()`); await sleep(200)
+  check('左栏 框:在视图中心新增一个框并选中', await (async () => { const b = await board(); return b.nodes.length === 1 && b.nodes[0].type === 'group' && (await ev('window.__wb.store.getState().selection[0]')) === b.nodes[0].id })())
+  // 撤销 / 重做
+  await reset([T('u1', 100, 100)]); await sleep(150)
+  check('无操作历史时,撤销/重做按钮禁用', await ev(`(()=>{const q=(l)=>[...document.querySelectorAll('.wb-lefttool button')].find(b=>(b.getAttribute('aria-label')||'').startsWith(l));return q('tool.undo').disabled&&q('tool.redo').disabled})()`))
+  await ev(`window.__wb.store.dispatch([{op:'moveNodes',ids:['u1'],dx:50,dy:0}])`); await sleep(200)
+  check('有历史后,撤销可用、重做仍禁用', await ev(`(()=>{const q=(l)=>[...document.querySelectorAll('.wb-lefttool button')].find(b=>(b.getAttribute('aria-label')||'').startsWith(l));return !q('tool.undo').disabled&&q('tool.redo').disabled})()`))
+  await ev(`[...document.querySelectorAll('.wb-lefttool button')].find(b=>(b.getAttribute('aria-label')||'').startsWith('tool.undo')).click()`); await sleep(200)
+  check('点左栏"撤销":回到原位,重做变为可用', (await pos('u1'))[0] === 100 && await ev(`![...document.querySelectorAll('.wb-lefttool button')].find(b=>(b.getAttribute('aria-label')||'').startsWith('tool.redo')).disabled`))
+  await ev(`[...document.querySelectorAll('.wb-lefttool button')].find(b=>(b.getAttribute('aria-label')||'').startsWith('tool.redo')).click()`); await sleep(200)
+  check('点左栏"重做":再次移动', (await pos('u1'))[0] === 150)
+  // 适应画面
+  await reset([T('f1', 2000, 1500), T('f2', 2400, 1700)]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(200)
+  await ev(`document.querySelector('.wb-lefttool button[aria-label="tool.fit"]').click()`); await sleep(250)
+  { const vp = await ev('window.__wb.store.getState().viewport'); const st = await ev(`(()=>{const r=document.querySelector('.wb-canvas').getBoundingClientRect();return {w:r.width,h:r.height}})()`)
+    const b = await board(); const x1 = 2000, x2 = 2520, y1 = 1500, y2 = 1770
+    const sx1 = x1 * vp.k + vp.x, sx2 = x2 * vp.k + vp.x, sy1 = y1 * vp.k + vp.y, sy2 = y2 * vp.k + vp.y
+    check('点左栏"适应画面":全部内容落进可见区域', sx1 >= 0 && sx2 <= st.w && sy1 >= 0 && sy2 <= st.h && b.nodes.length === 2, JSON.stringify({ vp, sx1, sx2, sy1, sy2 })) }
+  // 放置模式仍然可用(原有功能不退化)
+  await ev(`document.querySelector('.wb-lefttool button[aria-label="tool.cardTool"]').click()`); await sleep(100)
+  check('点左栏"卡片"进入放置模式', await ev(`document.querySelector('.wb-canvas').classList.contains('is-placing')`))
+  await ev(`window.__setTool(null)`); await sleep(80)
+  // 图形弹层在可滚动的工具栏之外渲染,不会被裁剪
+  await ev(`document.querySelector('.wb-lefttool button[aria-label="tool.shape"]').click()`); await sleep(150)
+  check('图形弹层挂在工具栏之外(不在可滚动容器里,不会被裁掉)', await ev(`(()=>{const p=document.querySelector('.wb-shape-pop');return !!p&&!p.closest('.wb-lefttool')})()`))
+  check('图形弹层完整显示在窗口内', await ev(`(()=>{const r=document.querySelector('.wb-shape-pop').getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()`))
+  await ev(`document.querySelector('.wb-lefttool button[aria-label="tool.select"]').click()`); await sleep(100)
+  // 窗口很矮时,左栏可滚动而不是溢出窗口
+  await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 360, deviceScaleFactor: 1, mobile: false }); await sleep(250)
+  { const m = await ev(`(()=>{const w=document.querySelector('.wb-lefttool-wrap').getBoundingClientRect();const t=document.querySelector('.wb-lefttool');return {top:w.top,bottom:w.bottom,h:innerHeight,scroll:t.scrollHeight>t.clientHeight}})()`)
+    check('窗口矮到放不下全部按钮时:左栏不超出窗口,并可滚动', m.top >= 0 && m.bottom <= m.h && m.scroll, JSON.stringify(m)) }
+  await send('Emulation.clearDeviceMetricsOverride'); await sleep(200)
+
+  console.log('拖入框时框自适应')
+  const GF = (id, x, y, w, h) => ({ id, type: 'group', x, y, width: w, height: h, label: id, color: 'blue' })
+  const gnode = async (id) => (await board()).nodes.find((n) => n.id === id)
+  await reset([GF('AF', 100, 100, 300, 220), T('af_in', 140, 180, 100, 60), T('af_mv', 700, 200, 140, 70)]); await sleep(200)
+  { const p0 = await P('af_mv'); const g0 = await gnode('AF')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 })
+    for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x - 70 * i, p0.y, { modifiers: 1 })           // 拖到框的右边缘附近(卡片会超出框)
+    await sleep(100)
+    const live = await ev(`(()=>{const e=document.querySelector('[data-wb-node="AF"]');return {w:parseFloat(e.style.width),h:parseFloat(e.style.height)}})()`)
+    check('拖动过程中,目标框实时变大以装下卡片', live.w > g0.width, JSON.stringify({ live, g0: [g0.width, g0.height] }))
+    check('拖动过程中框的高度不变(只向需要的方向扩)', live.h === g0.height)
+    check('拖动过程中数据尚未改变(只是预览)', (await gnode('AF')).width === g0.width)
+    await mouse('mouseReleased', p0.x - 420, p0.y, { modifiers: 1 }); await sleep(250)
+    const g1 = await gnode('AF'), m1 = await gnode('af_mv')
+    check('松手后:框已扩大,卡片整张在框内', g1.width > g0.width && m1.x >= g1.x && m1.x + m1.width <= g1.x + g1.width && m1.y >= g1.y && m1.y + m1.height <= g1.y + g1.height, JSON.stringify({ g1: [g1.x, g1.y, g1.width, g1.height], m1: [m1.x, m1.y] }))
+    check('框的左、上、下三边保持不动', g1.x === g0.x && g1.y === g0.y && g1.height === g0.height)
+    check('框内原有卡片没有动', (await pos('af_in'))[0] === 140 && (await pos('af_in'))[1] === 180)
+    check('拖入一步撤销:卡片回原位、框回原大小', await (async () => { await ev('window.__wb.store.undo()'); await sleep(200); const g = await gnode('AF'), m = await gnode('af_mv'); return g.width === g0.width && m.x === 700 })()) }
+  // 向左上扩:卡片从左上角拖入
+  await reset([GF('BF', 300, 300, 300, 220), T('bf_mv', 20, 20, 140, 70)]); await sleep(200)
+  { const g0 = await gnode('BF'); const p0 = await P('bf_mv')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 }); for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x + 55 * i, p0.y + 70 * i, { modifiers: 1 })
+    await mouse('mouseReleased', p0.x + 330, p0.y + 420, { modifiers: 1 }); await sleep(250)
+    const g1 = await gnode('BF'), m1 = await gnode('bf_mv')
+    check('从左上方拖入:卡片完整在框内', m1.x >= g1.x && m1.y >= g1.y && m1.x + m1.width <= g1.x + g1.width && m1.y + m1.height <= g1.y + g1.height, JSON.stringify({ g1: [g1.x, g1.y, g1.width, g1.height], m1: [m1.x, m1.y] }))
+    check('卡片顶部与框之间留出标题栏的高度', m1.y - g1.y >= 40 || g1.y === g0.y, JSON.stringify([m1.y - g1.y])) }
+  // 不吞邻居
+  await reset([GF('CF', 100, 100, 300, 220), T('cf_in', 140, 180, 100, 60), T('cf_mv', 700, 200, 140, 70), T('cf_near', 440, 200, 100, 70)]); await sleep(200)
+  { const p0 = await P('cf_mv')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 }); for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x - 70 * i, p0.y, { modifiers: 1 })
+    await mouse('mouseReleased', p0.x - 420, p0.y, { modifiers: 1 }); await sleep(250)
+    const members = await ev(`document.querySelector('[data-wb-node="CF"] .wb-group-count')?.textContent`)
+    check('框扩大时不会把框外的邻居卡片吞进来(成员数 = 原有 + 被拖入的 = 2)', members === '2', String(members))
+    check('邻居卡片位置不变', (await pos('cf_near'))[0] === 440) }
+  // 本来就装得下:框不变
+  await reset([GF('DF', 100, 100, 500, 360), T('df_mv', 700, 200, 120, 60)]); await sleep(200)
+  { const g0 = await gnode('DF'); const p0 = await P('df_mv')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 }); for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x - 70 * i, p0.y + 10 * i, { modifiers: 1 })
+    await mouse('mouseReleased', p0.x - 420, p0.y + 60, { modifiers: 1 }); await sleep(250)
+    const g1 = await gnode('DF')
+    check('装得下时框大小不变', g1.width === g0.width && g1.height === g0.height && g1.x === g0.x && g1.y === g0.y) }
+  // 多选一起拖入
+  await reset([GF('EF', 100, 100, 260, 340), T('ef_a', 700, 150, 140, 70), T('ef_b', 700, 300, 140, 70)]); await sleep(200)
+  await ev(`window.__wb.store.select(['ef_a','ef_b'])`); await sleep(120)
+  { const p0 = await P('ef_a')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 }); for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x - 75 * i, p0.y, { modifiers: 1 })
+    await mouse('mouseReleased', p0.x - 450, p0.y, { modifiers: 1 }); await sleep(250)
+    const g = await gnode('EF'), a = await gnode('ef_a'), b2 = await gnode('ef_b')
+    const inside = (n) => n.x >= g.x && n.y >= g.y && n.x + n.width <= g.x + g.width && n.y + n.height <= g.y + g.height
+    check('多选一起拖入:框扩大到装下全部', inside(a) && inside(b2), JSON.stringify({ g: [g.x, g.y, g.width, g.height] })) }
+  // 拖出框:不缩小
+  await reset([GF('FF', 100, 100, 400, 300), T('ff_in', 150, 180, 120, 60)]); await sleep(200)
+  { const g0 = await gnode('FF'); const p0 = await P('ff_in')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 }); for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x + 120 * i, p0.y, { modifiers: 1 })
+    await mouse('mouseReleased', p0.x + 720, p0.y, { modifiers: 1 }); await sleep(250)
+    const g1 = await gnode('FF')
+    check('把卡片拖出框:框不会随之缩小', g1.width === g0.width && g1.height === g0.height) }
+  // 框被拖动时(框 + 里面的)不触发自适应
+  await reset([GF('GF', 100, 100, 300, 220), T('gf_in', 140, 180, 100, 60)]); await sleep(200)
+  { const g0 = await gnode('GF'); const g = await node('GF'); const hx = g.x + g.w - 40, hy = g.y + 20
+    await mouse('mousePressed', hx, hy, { modifiers: 1 }); for (let i = 1; i <= 5; i++) await mouse('mouseMoved', hx + 30 * i, hy + 20 * i, { modifiers: 1 }); await mouse('mouseReleased', hx + 150, hy + 100, { modifiers: 1 }); await sleep(250)
+    const g1 = await gnode('GF')
+    check('直接拖动框本身:大小不变', g1.width === g0.width && g1.height === g0.height && g1.x === g0.x + 150) }
+  // 连线跟随框的预览与最终大小
+  await reset([GF('HF', 100, 100, 300, 220), SH('hf_s', 'rect', 600, 160, { width: 120, height: 60 }), SH('hf_o', 'rect', 600, 400, { width: 120, height: 60 })], [{ id: 'hfe', fromNode: 'hf_s', toNode: 'hf_o', fromSide: 'bottom', toSide: 'top' }]); await sleep(200)
+  { const p0 = await P('hf_s')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 }); for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x - 60 * i, p0.y + 5 * i, { modifiers: 1 })
+    await mouse('mouseReleased', p0.x - 360, p0.y + 30, { modifiers: 1 }); await sleep(250)
+    const end = await ev(`(()=>{const d=document.querySelector('.wb-edge-line').getAttribute('d');const m=d.match(/^M ([\\d.-]+) ([\\d.-]+)/);return [parseFloat(m[1]),parseFloat(m[2])]})()`)
+    const s = await gnode('hf_s')
+    check('框扩大后,连到被拖图形的连线仍贴着它', Math.abs(end[0] - (s.x + s.width / 2)) < 1 && Math.abs(end[1] - (s.y + s.height)) < 1, JSON.stringify({ end, s: [s.x, s.y, s.width, s.height] })) }
   const shot = await send('Page.captureScreenshot', { format: 'png' })
   await writeFile('e2e/out/shot.png', Buffer.from(shot.result.data, 'base64'))
   check('无未处理错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))

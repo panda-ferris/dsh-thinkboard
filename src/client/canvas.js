@@ -12,7 +12,7 @@ import { quickAddPlan, SHAPE_DEFAULT_SIZE } from '../core/shapes.js'
 import { shapeStroke } from './colors.js'
 import { containedBy } from '../core/ops.js'
 import { selectionUnitFor, enterScope, expandToUnits, unitsOf, groupOps, ungroupOps, scaleOps, clusterPath, bounds as clusterBounds, remapClusters } from '../core/cluster.js'
-import { copyPayload, parsePayload, pasteOps, dropTarget as calcDrop, memberCount } from '../core/arrange.js'
+import { copyPayload, parsePayload, pasteOps, dropTarget as calcDrop, memberCount, growFrameToFit, bystandersOf } from '../core/arrange.js'
 import { uid } from '../core/model.js'
 import { NodeView } from './nodes.js'
 import { ContextBar, Minimap, SearchBox, Lightbox, useSize } from './overlays.js'
@@ -33,6 +33,7 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
   const size = useSize(stageRef)
   const [preview_, setPreviewImg] = React.useState(null)
   const replaceRef = React.useRef(null)
+  const addFileRef = React.useRef(null)
   const replaceTarget = React.useRef(null)
   const drag = React.useRef(null)
   const [preview, setPreview] = React.useState(null) // { dx, dy, ids:Set, guides, gaps, dropGroup }
@@ -83,6 +84,7 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
   const live = (n) => {
     // 拖动/缩放中的预览位置
     if (preview && preview.ids.has(n.id)) return { ...n, x: n.x + preview.dx, y: n.y + preview.dy }
+    if (preview?.grow && preview.grow.id === n.id) return { ...n, x: preview.grow.x, y: preview.grow.y, width: preview.grow.width, height: preview.grow.height }
     if (clusterScale && clusterScale.map[n.id]) return { ...n, ...clusterScale.map[n.id] }
     if (resize && resize.id === n.id) return { ...n, x: resize.x, y: resize.y, width: resize.width, height: resize.height }
     return n
@@ -118,6 +120,24 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
     // 图形放下后不立即进入文字编辑(更像飞书:先放好再双击写字);文本和卡片直接编辑
     if (tool.kind !== 'shape') store.setEditing(id)
     if (!keepTool && !tool.sticky) setTool?.(null)
+  }
+
+  const addHtmlAtCenter = () => {
+    const c0 = viewCenter()
+    const id = uid('n')
+    store.dispatch([{ op: 'addNode', node: { id, type: 'html', x: Math.round(c0.x - 200), y: Math.round(c0.y - 150), width: 400, height: 300, html: '' } }])
+    store.select([id]); store.setEditing(id)
+  }
+
+  /** 适配视图:让全部内容刚好落进可见区域。 */
+  const fitView = () => {
+    if (!board.nodes.length) { store.setViewport({ x: 0, y: 0, k: 1 }); return }
+    const r = rootRef.current.getBoundingClientRect()
+    const x1 = Math.min(...board.nodes.map((n) => n.x)), y1 = Math.min(...board.nodes.map((n) => n.y))
+    const x2 = Math.max(...board.nodes.map((n) => n.x + n.width)), y2 = Math.max(...board.nodes.map((n) => n.y + n.height))
+    const pad = 60
+    const k0 = Math.min(1.5, Math.max(0.1, Math.min((r.width - pad * 2) / (x2 - x1), (r.height - pad * 2) / (y2 - y1))))
+    store.setViewport({ k: k0, x: (r.width - (x2 - x1) * k0) / 2 - x1 * k0, y: (r.height - (y2 - y1) * k0) / 2 - y1 * k0 })
   }
 
   const addGroupAtCenter = () => {
@@ -301,7 +321,16 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
       const leaving = drop.leaving.filter((x) => x.groupId !== dropGroup).map((x) => x.groupId)
       d.drop = drop
       d.result = { dx, dy }
-      setPreview({ dx, dy, ids: d.ids, guides, gaps, dropGroup, dropCount: drop.inside.length, leaving: new Set(leaving) })
+      // 拖到框上时框实时长大,装得下被拖元素(只增不缩、只向需要的方向扩)
+      let grow = null
+      if (dropGroup) {
+        const frame = byId.get(dropGroup)
+        const rects = board.nodes.filter((n) => d.ids.has(n.id) && n.type !== 'group').map((n) => ({ x: n.x + dx, y: n.y + dy, width: n.width, height: n.height }))
+        const g = growFrameToFit(frame, rects, { bystanders: bystandersOf(board, frame, [...d.ids]) })
+        if (g) grow = { id: dropGroup, ...g }
+      }
+      d.grow = grow
+      setPreview({ dx, dy, ids: d.ids, guides, gaps, dropGroup, dropCount: drop.inside.length, leaving: new Set(leaving), grow })
     } else if (d.kind === 'unitResize') {
       const dx = (e.clientX - d.cx) / k, dy = (e.clientY - d.cy) / k
       const o = d.orig, hd = d.handle
@@ -379,6 +408,8 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
       // 以前把框和卡片拆成两条 op,第二条会让已被框带走的卡片再移动一次。
       const ids = [...new Set(expandToUnits(board, d.roots, scope))]
       const ops = ids.length ? [{ op: 'moveNodes', ids, dx: d.result.dx, dy: d.result.dy }] : []
+      // 目标框扩大与移动在同一批 ops 里:一次撤销同时还原卡片位置和框的大小
+      if (ops.length && d.grow) { const { id, ...patch } = d.grow; ops.push({ op: 'updateNode', id, patch }) }
       if (ops.length) store.dispatch(ops)
     }
     if (d.kind === 'move') {
@@ -681,11 +712,19 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
   )
   return h('div', { ref: stageRef, className: 'wb-canvas-host' },
     canvas,
-    setTool ? h(LeftToolbar, { tool, setTool, t, onAddGroup: () => addGroupAtCenter() }) : null,
+    setTool ? h(LeftToolbar, {
+      tool, setTool, t, onAddGroup: () => addGroupAtCenter(),
+      onAddImage: () => addFileRef.current?.click(),
+      onAddHtml: () => addHtmlAtCenter(),
+      onUndo: store.undo, onRedo: store.redo, onFit: () => fitView(),
+      canUndo: state.canUndo, canRedo: state.canRedo,
+    }) : null,
+    h('input', { ref: addFileRef, type: 'file', accept: 'image/*', multiple: true, hidden: true, 'data-wb-ui': true, 'data-wb-add-image': true,
+      onChange: (e) => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) addImages(fs, viewCenter()) } }),
     h(ContextBar, { store, state, size, t, dragging: isDragging, transport,
       onReplaceImage: (n) => { replaceTarget.current = n.id; replaceRef.current?.click() },
       onPreview: (n) => setPreviewImg({ src: transport.assetUrl(board.id, n.file), alt: n.caption || n.title }) }),
-    h('input', { ref: replaceRef, type: 'file', accept: 'image/*', hidden: true, 'data-wb-ui': true, onChange: (e) => { const f = e.target.files?.[0]; e.target.value = ''; replaceImage(f) } }),
+    h('input', { ref: replaceRef, type: 'file', accept: 'image/*', hidden: true, 'data-wb-ui': true, 'data-wb-replace-image': true, onChange: (e) => { const f = e.target.files?.[0]; e.target.value = ''; replaceImage(f) } }),
     preview_ ? h(Lightbox, { src: preview_.src, alt: preview_.alt, onClose: () => setPreviewImg(null) }) : null,
     search ? h(SearchBox, { store, state, size, t, onClose: () => { setSearch(false); rootRef.current?.focus() } }) : null,
     h(Minimap, { store, state, size, t }))
