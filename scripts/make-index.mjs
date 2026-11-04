@@ -8,7 +8,7 @@
 //   - 同一个版本号已在索引里、但指向了不同的提交(已发布的版本不可变;要改就升版本号)
 
 import { execFileSync } from 'node:child_process'
-import { readFile, writeFile, access } from 'node:fs/promises'
+import { readFile, writeFile, access, mkdir } from 'node:fs/promises'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -92,5 +92,6 @@ for (const c of candidates) {
 }
 if (!validated) console.log('⚠ 没找到 dsh 的索引校验器,未做格式校验(可设 DSH_MARKET_INDEX_LIB 指向 dsh-plugin-market-index/lib/index.js)')
 
+await mkdir(dirname(outPath), { recursive: true })
 await writeFile(outPath, JSON.stringify(doc, null, 2) + '\n')
 console.log(`✔ 已写入 ${outPath}:${pkg.name}@${pkg.version} → ${commit.slice(0, 12)}`)
