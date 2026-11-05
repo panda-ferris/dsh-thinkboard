@@ -131,10 +131,14 @@ test('dropTarget: 中心点落入框内才算(框内的不同位置)', () => {
   assert.equal(dropTarget(b, ['c'], -290, 0).target, 'g1')       // 中心 (360,130)
 })
 
-test('dropTarget: 边界值——中心刚好在框边上算在内,差 1px 不算', () => {
+test('dropTarget: 边界值——框内与缓冲带内算放入,出了缓冲带不算', () => {
   const b = make({ op: 'addNode', node: { id: 'g', type: 'group', x: 0, y: 0, width: 400, height: 300 } }, T('c', 600, 100, 100, 60))
-  assert.equal(dropTarget(b, ['c'], -250, 0).target, 'g')   // 中心 x=400
-  assert.equal(dropTarget(b, ['c'], -249, 0).target, null)  // 中心 x=401
+  assert.equal(dropTarget(b, ['c'], -250, 0).target, 'g')                    // 中心 x=400,正好在框边上
+  assert.equal(dropTarget(b, ['c'], -249, 0).target, 'g')                    // 中心 x=401:越界 1px,仍在缓冲带内(框会跟着长)
+  assert.equal(dropTarget(b, ['c'], -250 + 40, 0).target, 'g')               // 越界 40px = 缓冲带边缘
+  assert.equal(dropTarget(b, ['c'], -250 + 41, 0).target, null)              // 越界 41px:出了缓冲带
+  assert.equal(dropTarget(b, ['c'], -250 + 41, 0, { slack: 0, slackOut: 0 }).target, null)
+  assert.equal(dropTarget(b, ['c'], -249, 0, { slack: 0, slackOut: 0 }).target, null, 'slack=0 时退回严格几何判定')
 })
 
 test('dropTarget: 嵌套重叠时取面积最小的框', () => {
@@ -267,4 +271,60 @@ test('框扩张:没有邻居阻挡时仍完整包住(行为与无邻居版本一
   const r = applyOps(b, [{ op: 'moveNodes', ids: ['mv'], dx: -200, dy: 0 }, ...dropIntoFrameOps(b, 'F', ['mv'], -200, 0)]).board
   const f = r.nodes.find((n) => n.id === 'F'), m = r.nodes.find((n) => n.id === 'mv')
   assert.ok(m.x >= f.x && m.x + m.width <= f.x + f.width && m.y >= f.y && m.y + m.height <= f.y + f.height)
+})
+
+// ---------- 缓冲带与迟滞:往外推时框要跟着长 ----------
+const BF = () => make({ op: 'addNode', node: { id: 'F', type: 'group', x: 100, y: 100, width: 300, height: 220 } }, T('mv', 700, 200, 140, 70), T('ex', 130, 150, 100, 60))
+// 卡片宽 140:中心 x = 770 + dx;框右边 x=400
+
+test('dropTarget 缓冲带:中心越过框原边界一点点,仍判定为放入(框来得及跟着长)', () => {
+  const b = BF()
+  assert.equal(dropTarget(b, ['mv'], 380 - 770, 0).target, 'F')   // 框内
+  assert.equal(dropTarget(b, ['mv'], 410 - 770, 0).target, 'F')   // 越界 10
+  assert.equal(dropTarget(b, ['mv'], 439 - 770, 0).target, 'F')   // 越界 39,仍在缓冲带内
+})
+
+test('dropTarget 缓冲带:超出缓冲带视为离开', () => {
+  const b = BF()
+  assert.equal(dropTarget(b, ['mv'], 441 - 770, 0).target, null)
+  assert.equal(dropTarget(b, ['mv'], 600 - 770, 0).target, null)
+})
+
+test('dropTarget 迟滞:已放入时,需要走出更宽的范围才算离开(进入容易、离开难)', () => {
+  const b = BF()
+  assert.equal(dropTarget(b, ['mv'], 460 - 770, 0).target, null)                       // 没放入过:460 在缓冲带外
+  assert.equal(dropTarget(b, ['mv'], 460 - 770, 0, { prev: 'F' }).target, 'F')         // 已放入:460 仍算在里面
+  assert.equal(dropTarget(b, ['mv'], 479 - 770, 0, { prev: 'F' }).target, 'F')
+  assert.equal(dropTarget(b, ['mv'], 481 - 770, 0, { prev: 'F' }).target, null)        // 走出 80 才离开
+})
+
+test('dropTarget 缓冲带:严格落在框内的优先于只在缓冲带里的(相邻框不抢)', () => {
+  const b = make(
+    { op: 'addNode', node: { id: 'A', type: 'group', x: 0, y: 0, width: 300, height: 200 } },
+    { op: 'addNode', node: { id: 'B', type: 'group', x: 310, y: 0, width: 300, height: 200 } },
+    T('mv', 700, 50, 100, 60),
+  )
+  assert.equal(dropTarget(b, ['mv'], 180 - 750, 0).target, 'A')   // 中心 x=180:严格在 A;离 B 的缓冲带也近
+  assert.equal(dropTarget(b, ['mv'], 400 - 750, 0).target, 'B')   // 严格在 B
+  assert.equal(dropTarget(b, ['mv'], 305 - 750, 0).target, 'A')   // 缝隙里:都在缓冲带,取面积最小(相同则先列出的)
+})
+
+test('dropTarget 缓冲带:按屏幕像素换算(slack 随缩放传入)', () => {
+  const b = BF()
+  // 缩放 0.5:屏幕 40px = world 80;中心越界 70 仍在缓冲带内
+  assert.equal(dropTarget(b, ['mv'], 470 - 770, 0, { slack: 80, slackOut: 160 }).target, 'F')
+  assert.equal(dropTarget(b, ['mv'], 490 - 770, 0, { slack: 80, slackOut: 160 }).target, null)
+})
+
+test('缓冲带内松手:归属与预览一致——卡片中心确实在(已扩大的)框内', () => {
+  const b = BF()
+  for (const cx of [380, 410, 439]) {
+    const dx = cx - 770
+    assert.equal(dropTarget(b, ['mv'], dx, 0).target, 'F')
+    const r = applyOps(b, [{ op: 'moveNodes', ids: ['mv'], dx, dy: 0 }, ...dropIntoFrameOps(b, 'F', ['mv'], dx, 0)]).board
+    const f = r.nodes.find((n) => n.id === 'F'), m = r.nodes.find((n) => n.id === 'mv')
+    assert.ok(m.x + m.width / 2 >= f.x && m.x + m.width / 2 <= f.x + f.width, `cx=${cx}`)
+    assert.ok(m.x >= f.x && m.x + m.width <= f.x + f.width, `cx=${cx} 整张卡片也在框内`)
+    assert.ok(containedBy(r, f).some((n) => n.id === 'mv'), `cx=${cx} 成员关系成立`)
+  }
 })

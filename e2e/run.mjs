@@ -1522,6 +1522,57 @@ try {
     const end = await ev(`(()=>{const d=document.querySelector('.wb-edge-line').getAttribute('d');const m=d.match(/^M ([\\d.-]+) ([\\d.-]+)/);return [parseFloat(m[1]),parseFloat(m[2])]})()`)
     const s = await gnode('hf_s')
     check('框扩大后,连到被拖图形的连线仍贴着它', Math.abs(end[0] - (s.x + s.width / 2)) < 1 && Math.abs(end[1] - (s.y + s.height)) < 1, JSON.stringify({ end, s: [s.x, s.y, s.width, s.height] })) }
+
+  console.log('拖入框:把卡片往框外侧推开时,框要跟着长(不能一越过原边界就恢复)')
+  { // 框 100..400 × 100..320;卡片 140 宽,从右边拖进来,再继续往右推
+    const liveBox = (id) => ev(`(()=>{const e=document.querySelector('[data-wb-node="${id}"]');return {w:parseFloat(e.style.width),h:parseFloat(e.style.height),drop:e.classList.contains('is-drop'),leaving:e.classList.contains('is-leaving')}})()`)
+    await reset([GF('PF', 100, 100, 300, 220), T('pf_ex', 130, 150, 100, 60), T('pf_mv', 700, 200, 140, 70)]); await sleep(200)
+    const p0 = await P('pf_mv'); const g0 = await gnode('PF')   // 卡片中心 x=770
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 })
+    const to = async (cx) => { const steps = 4; const cur = await P('pf_mv'); for (let i = 1; i <= steps; i++) await mouse('mouseMoved', cur.x + ((p0.x - (770 - cx)) - cur.x) * i / steps, p0.y, { modifiers: 1 }); await sleep(60) }
+    await to(380)                                   // 中心在原框内(离右边 20px),卡片右缘已超出框
+    const a = await liveBox('PF')
+    check('中心在框内、卡片探出边缘:框已变大并高亮', a.drop && a.w > g0.width, JSON.stringify(a))
+    await to(430)                                   // 中心越过原来的右边 30px —— 用户反馈的场景
+    const b = await liveBox('PF')
+    check('把卡片继续往外推、中心越过原边界 30px:框不恢复,继续跟着长', b.drop && b.w > a.w - 1 && !b.leaving, JSON.stringify({ a, b }))
+    check('此时框足够大,装得下整张卡片(卡片右缘 + 留白)', b.w >= (430 + 70 + 24) - 100 - 1, JSON.stringify(b))
+    await to(450)
+    const c = await liveBox('PF')
+    check('再推 20px:框依然跟随变大', c.drop && c.w >= b.w, JSON.stringify({ b, c }))
+    await to(380)
+    const d2 = await liveBox('PF')
+    check('往回拉:框跟着缩回(只保留装下卡片所需的大小)', d2.w <= c.w && d2.drop, JSON.stringify({ c, d2 }))
+    await to(430)
+    await mouse('mouseReleased', (await P('pf_mv')).x, p0.y, { modifiers: 1 }); await sleep(250)
+    const g1 = await gnode('PF'), m1 = await gnode('pf_mv')
+    check('在越过原边界的位置松手:卡片属于框,且整张在框内', m1.x >= g1.x && m1.x + m1.width <= g1.x + g1.width && m1.y >= g1.y && m1.y + m1.height <= g1.y + g1.height, JSON.stringify({ g1: [g1.x, g1.y, g1.width, g1.height], m1: [m1.x, m1.y] }))
+    check('卡片中心在原来的框之外(确认确实走过"越界"路径)', m1.x + m1.width / 2 > g0.x + g0.width)
+    check('成员数为 2(原有 + 拖入)', (await ev(`document.querySelector('[data-wb-node="PF"] .wb-group-count')?.textContent`)) === '2')
+    check('一步撤销:框与卡片一起回到原样', await (async () => { await ev('window.__wb.store.undo()'); await sleep(200); const g = await gnode('PF'), m = await gnode('pf_mv'); return g.width === g0.width && m.x === 700 })()) }
+  { // 推得太远:越过缓冲带 → 视为离开,框恢复,出现"将移出"
+    const liveBox = (id) => ev(`(()=>{const e=document.querySelector('[data-wb-node="${id}"]');return {w:parseFloat(e.style.width),drop:e.classList.contains('is-drop'),leaving:e.classList.contains('is-leaving')}})()`)
+    await reset([GF('QF', 100, 100, 300, 220), T('qf_in', 130, 150, 100, 60)]); await sleep(200)
+    const g0 = await gnode('QF'); const p0 = await P('qf_in')                 // 卡片原本在框内,中心 (180,180)
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 })
+    for (let i = 1; i <= 8; i++) await mouse('mouseMoved', p0.x + 60 * i, p0.y, { modifiers: 1 })   // 中心 → 660,远在框外
+    await sleep(80)
+    const q = await liveBox('QF')
+    check('把框内卡片一路拖到远处:框恢复原大小', q.w === g0.width, JSON.stringify(q))
+    check('远离后:框显示"将移出",不再是"放入"', q.leaving && !q.drop, JSON.stringify(q))
+    await mouse('mouseReleased', p0.x + 480, p0.y, { modifiers: 1 }); await sleep(250)
+    const g1 = await gnode('QF'); const m1 = await gnode('qf_in')
+    check('松手后卡片已在框外,框大小未变', m1.x > g1.x + g1.width && g1.width === g0.width, JSON.stringify({ g1: [g1.width], m1: [m1.x] })) }
+  { // 缓冲带随缩放按屏幕像素计算:缩小到 50% 后,越界 30 屏幕像素仍在缓冲带内
+    await reset([GF('RF', 100, 100, 300, 220), T('rf_mv', 700, 200, 140, 70)]); await ev(`window.__wb.store.setViewport({x:40,y:20,k:0.5})`); await sleep(250)
+    const g0 = await gnode('RF'); const p0 = await P('rf_mv')
+    await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 })
+    const targetWorldCenterX = 430; const dxScreen = (targetWorldCenterX - 770) * 0.5
+    for (let i = 1; i <= 6; i++) await mouse('mouseMoved', p0.x + dxScreen * i / 6, p0.y, { modifiers: 1 })
+    await sleep(80)
+    const live = await ev(`(()=>{const e=document.querySelector('[data-wb-node="RF"]');return {w:parseFloat(e.style.width),drop:e.classList.contains('is-drop')}})()`)
+    check('画布缩放 50% 时同样生效(缓冲带按屏幕像素计)', live.drop && live.w > g0.width, JSON.stringify(live))
+    await mouse('mouseReleased', p0.x + dxScreen, p0.y, { modifiers: 1 }); await sleep(200) }
   const shot = await send('Page.captureScreenshot', { format: 'png' })
   await writeFile('e2e/out/shot.png', Buffer.from(shot.result.data, 'base64'))
   check('无未处理错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))

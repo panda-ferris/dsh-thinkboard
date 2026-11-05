@@ -145,24 +145,40 @@ export function pasteOps(payload, { boardId, at, offset = 32, newId }) {
 // ---------------- 框成员关系 ----------------
 /**
  * 一组被移动的节点(已含位移 dx/dy)落在哪个框里。
- * 规则:被移动的"顶层"节点(框不算)的中心点落在框内才算归属;多个节点时,所有节点都落在同一个框内才高亮该框。
- * 重叠的框取层级最上(数组靠后)且面积最小的。被移动的框自己、以及它的子孙不能当目标。
- * 返回 { target: 框 id | null, inside: 落入的节点 id[], leaving: 原本在某框内、现在要离开的 { nodeId, groupId }[] }
+ *
+ * 规则:被移动的节点中心点落在框的"接收范围"内才算归属。
+ *   - 接收范围 = 框本身向四周各外扩 slack(缓冲带)。
+ *     框会为了装下卡片而长大,如果判定只看框的原大小,卡片一被往外推、中心越过原边界,
+ *     框就"恢复"了——用户想拉开距离时,框反而跟不上。缓冲带让框能跟着长一段。
+ *   - 迟滞(hysteresis):已经被判定为"放入"某个框时,继续用更宽的 slackOut 判定是否离开。
+ *     进入容易、离开难,避免在边界附近来回抖动。调用方把上一次的结果通过 prev 传回来。
+ *   - 多个节点必须都落在同一个框内才算;重叠的框取面积最小的;被移动的框自己不能当目标。
+ * 返回 { target, inside, leaving }(leaving:原本在某框内、现在要离开的节点)。
  */
-export function dropTarget(board, movedIds, dx, dy) {
+export const DROP_SLACK = 40       // 进入:中心距框边在此范围内也算(world 单位)
+export const DROP_SLACK_OUT = 80   // 已在框里时,离开需要走出这个更大的范围
+
+export function dropTarget(board, movedIds, dx, dy, { slack = DROP_SLACK, slackOut = DROP_SLACK_OUT, prev = null } = {}) {
   const moved = new Set(movedIds)
   const cards = board.nodes.filter((n) => moved.has(n.id) && n.type !== 'group')
   if (!cards.length) return { target: null, inside: [], leaving: [] }
   const center = (n) => ({ x: n.x + dx + n.width / 2, y: n.y + dy + n.height / 2 })
   const groups = board.nodes.filter((g) => g.type === 'group' && !moved.has(g.id))
-  const containing = (p) => groups.filter((g) => p.x >= g.x && p.x <= g.x + g.width && p.y >= g.y && p.y <= g.y + g.height)
-    .sort((a, b) => a.width * a.height - b.width * b.height)[0]
+  const within = (g, p, m) => p.x >= g.x - m && p.x <= g.x + g.width + m && p.y >= g.y - m && p.y <= g.y + g.height + m
+  const area = (g) => g.width * g.height
+  // 一个中心点应当归属哪个框:上一次已选中的框用宽范围(迟滞),其余用窄范围;取面积最小者
+  const containing = (p) => {
+    const hit = groups.filter((g) => within(g, p, prev && prev === g.id ? slackOut : slack))
+    // 严格落在框内的优先于只落在缓冲带里的(嵌套/相邻框时不抢走真正包含它的框)
+    const strict = hit.filter((g) => within(g, p, 0))
+    return (strict.length ? strict : hit).sort((a, b) => area(a) - area(b))[0]
+  }
   const perCard = cards.map((c) => ({ c, g: containing(center(c)) }))
   const first = perCard[0].g
   const allSame = first && perCard.every((x) => x.g?.id === first.id)
   const leaving = []
   for (const c of cards) {
-    const was = board.nodes.filter((g) => g.type === 'group' && !moved.has(g.id) && containingNow(g, c)).sort((a, b) => a.width * a.height - b.width * b.height)[0]
+    const was = board.nodes.filter((g) => g.type === 'group' && !moved.has(g.id) && containingNow(g, c)).sort((a, b) => area(a) - area(b))[0]
     const now = perCard.find((x) => x.c.id === c.id).g
     if (was && (!now || now.id !== was.id)) leaving.push({ nodeId: c.id, groupId: was.id })
   }

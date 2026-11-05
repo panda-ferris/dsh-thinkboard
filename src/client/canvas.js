@@ -316,7 +316,9 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
         }
       }
       // 拖到框上:高亮目标框并提示;从框里拖出:提示"将移出"。归属由几何决定,所以这里只是预览。
-      const drop = calcDrop(board, d.roots, dx, dy)
+      // 缓冲带按屏幕像素计(缩放后手感一致);上一次的目标框传回去做迟滞,避免边界抖动
+      const drop = calcDrop(board, d.roots, dx, dy, { slack: 40 / k, slackOut: 80 / k, prev: d.lastTarget ?? null })
+      d.lastTarget = drop.target
       const dropGroup = drop.target
       const leaving = drop.leaving.filter((x) => x.groupId !== dropGroup).map((x) => x.groupId)
       d.drop = drop
