@@ -82,7 +82,7 @@ if (params.get('panel')) {
   window.__pstore = pstore
   // ---- 假的 dsh 输入框服务:接口形状与 dsh 源码一致(sessions.scope → conversation.input.for → shell.addFiles) ----
   const fake = { calls: [], shellBusy: false, chips: [], forThrows: false, noShell: false, drafts: [], ids: [] }
-  const shell = { addFiles: (refs, ids) => { fake.calls.push({ refs, ids }); if (fake.shellBusy) return false; fake.chips.push(...refs); return true } }
+  const shell = { get draftSnapshot() { return { text: '', references: fake.chips.map((c, i) => ({ source: c.source, ref: c.ref, offset: i, length: 1, label: c.label, clipboardText: c.clipboardText })) } }, addFiles: (refs, ids) => { fake.calls.push({ refs, ids }); if (fake.shellBusy) return false; fake.chips.push(...refs); return true } }
   const scoped = { get: (k) => (k === 'conversation' ? { input: { for: (c) => { if (fake.forThrows) throw new Error('boom'); if (c !== scoped) throw new Error('wrong scope'); return fake.noShell ? undefined : shell }, requestDraftInitialization: (b, o) => { fake.drafts.push(o); return 'applied' } } } : undefined) }
   window.__fake = fake
   window.__focusBus = createFocusBus()

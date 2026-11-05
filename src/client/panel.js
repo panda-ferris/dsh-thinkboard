@@ -11,7 +11,7 @@ import { Icon } from './icons.js'
 import { initialImageSize } from '../core/content.js'
 import { DetailPane } from './detail.js'
 import { migrateLegacyKeys } from './storage.js'
-import { chipsForSelection } from './chatref.js'
+import { chipsForSelection, dedupeChips } from './chatref.js'
 import { focusViewport } from '../core/view.js'
 
 migrateLegacyKeys()
@@ -304,7 +304,7 @@ function ChatPane({ boardId, chat, setChat, state, t, ctx, renderSlot, SessionPr
     !boardId ? h('div', { className: 'wb-chat-empty' }, t('chat.pickBoard'))
       : ref && SessionProvider
         ? h(React.Fragment, null,
-          sel.length ? h('div', { className: 'wb-chat-ctx' }, t('chat.selected', { count: sel.length }), h('button', { className: 'wb-btn', onClick: () => { const r = attachSelection(ctx, ref, state.board, sel.map((n) => n.id), t); setNote(r === 'blocked' ? t('chatref.blocked') : r === 'chips' ? t('chatref.attached', { count: sel.length }) : null) } }, t('chat.attach')), note ? h('span', { className: 'wb-chat-note', role: 'status' }, note) : null) : null,
+          sel.length ? h('div', { className: 'wb-chat-ctx' }, t('chat.selected', { count: sel.length }), h('button', { className: 'wb-btn', onClick: () => { const r = attachSelection(ctx, ref, state.board, sel.map((n) => n.id), t); setNote(r.status === 'blocked' ? t('chatref.blocked') : r.status === 'duplicate' ? t('chatref.duplicate') : r.status === 'chips' ? (r.skipped ? t('chatref.attachedSkipped', { count: r.added, skipped: r.skipped }) : t('chatref.attached', { count: r.added })) : null) } }, t('chat.attach')), note ? h('span', { className: 'wb-chat-note', role: 'status' }, note) : null) : null,
           h('div', { className: 'wb-chat-body' }, h(SessionProvider, { session: ref }, renderSlot('thinkboard.chat', {}))))
         : h('div', { className: 'wb-chat-empty' },
           h('div', null, t('chat.noSession')),
@@ -327,24 +327,27 @@ function SessionPicker({ sessions, onPick, t }) {
  *   - addFiles 在光标处批量插入 chip,不要求有附件(ids 传空数组)。
  *   - 输入框正在发送时返回 false,此时提示用户稍后再试(不降级,免得出现一半是文本一半是对象)。
  * 取不到输入框(接口变化、会话未就绪)时,降级为纯文本草稿,功能不丢。
- * 返回 'chips' | 'text' | 'blocked'。
+ * 返回 { status: 'chips' | 'duplicate' | 'text' | 'blocked', added, skipped }。
  */
 export function attachSelection(ctx, ref, board, ids, t) {
-  const chips = chipsForSelection(board, ids)
-  if (!chips.length) return 'blocked'
+  const all = chipsForSelection(board, ids)
+  if (!all.length) return { status: 'blocked', added: 0, skipped: 0 }
   try {
     // 与 dsh 自带的附件处理同款取法:会话作用域 ctx → conversation 服务 → 该会话的输入框
     const scoped = ctx.sessions.scope(ref.sessionId)
     const shell = scoped?.get?.('conversation')?.input?.for?.(scoped)
     if (shell && typeof shell.addFiles === 'function') {
-      return shell.addFiles(chips, []) ? 'chips' : 'blocked'
+      // 去重:输入框里已有的元素不再加入(按 白板id/元素id 判断,标题变了也算同一个)
+      const { fresh, skipped } = dedupeChips(all, shell.draftSnapshot?.references)
+      if (!fresh.length) return { status: 'duplicate', added: 0, skipped }
+      return shell.addFiles(fresh, []) ? { status: 'chips', added: fresh.length, skipped } : { status: 'blocked', added: 0, skipped }
     }
   } catch { /* 落到文本降级 */ }
-  const lines = chips.map((c) => c.ref)
+  const lines = all.map((c) => c.ref)
   const text = `${t('chat.contextHeader', { board: board.title, id: board.id })}\n${lines.join('\n')}\n`
   try {
     const binding = ctx.sessions.binding(ref.sessionId)
     ctx.get('conversation')?.input?.requestDraftInitialization?.(binding, { prompt: text, whenDraftExists: 'append' })
-    return 'text'
-  } catch { navigator.clipboard?.writeText(text); return 'text' }
+    return { status: 'text', added: all.length, skipped: 0 }
+  } catch { navigator.clipboard?.writeText(text); return { status: 'text', added: all.length, skipped: 0 } }
 }

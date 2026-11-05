@@ -87,3 +87,47 @@ test('chipsForSelection:按白板顺序产出,只含存在的元素', () => {
   assert.deepEqual(cs.map((c) => parseRef(c.ref).nodeId), ['n1', 'n3'])
   assert.deepEqual(chipsForSelection(board, []), [])
 })
+
+import { presentKeys, dedupeChips } from '../src/client/chatref.js'
+
+const refOf = (b, id) => chipFor(b, board.nodes.find((n) => n.id === id)).ref
+const inDraft = (...pairs) => pairs.map(([b, id]) => ({ source: SOURCE, ref: refOf(b, id), offset: 0, length: 1, label: 'x', clipboardText: refOf(b, id) }))
+
+test('presentKeys: 只统计本来源的对象;其它来源(文件、会话)与非法 ref 被忽略', () => {
+  const refs = [...inDraft(['b1', 'n1']), { source: 'reference', ref: '@src/a.js' }, { source: SOURCE, ref: '乱写' }, null, undefined]
+  assert.deepEqual([...presentKeys(refs)], ['b1/n1'])
+  assert.equal(presentKeys(undefined).size, 0)
+})
+
+test('dedupeChips: 输入框里已有的元素不再加入', () => {
+  const chips = chipsForSelection(board, ['n1', 'n3'])
+  const { fresh, skipped } = dedupeChips(chips, inDraft(['b1', 'n1']))
+  assert.deepEqual(fresh.map((c) => parseRef(c.ref).nodeId), ['n3']); assert.equal(skipped, 1)
+})
+
+test('dedupeChips: 全部已存在 → 什么都不加', () => {
+  const { fresh, skipped } = dedupeChips(chipsForSelection(board, ['n1', 'n3']), inDraft(['b1', 'n1'], ['b1', 'n3']))
+  assert.deepEqual(fresh, []); assert.equal(skipped, 2)
+})
+
+test('dedupeChips: 输入框为空 → 全部加入', () => {
+  const chips = chipsForSelection(board, ['n1', 'n2'])
+  assert.deepEqual(dedupeChips(chips, []).fresh, chips); assert.equal(dedupeChips(chips, []).skipped, 0)
+})
+
+test('dedupeChips: 同一批里自身重复也只留一个', () => {
+  const c = chipFor('b1', board.nodes[0])
+  const { fresh, skipped } = dedupeChips([c, { ...c }, chipFor('b1', board.nodes[2])], [])
+  assert.equal(fresh.length, 2); assert.equal(skipped, 1)
+})
+
+test('dedupeChips: 不同白板上 id 相同的元素不算重复', () => {
+  const c = chipFor('b1', board.nodes[0])
+  const otherBoardDraft = [{ source: SOURCE, ref: encodeRef('b2', 'n1', '登录方案') }]
+  assert.equal(dedupeChips([c], otherBoardDraft).fresh.length, 1)
+})
+
+test('dedupeChips: 元素改过标题后仍算同一个(按 id 判断,不按标签)', () => {
+  const renamed = [{ source: SOURCE, ref: encodeRef('b1', 'n1', '旧标题') }]
+  assert.equal(dedupeChips([chipFor('b1', board.nodes[0])], renamed).fresh.length, 0)
+})

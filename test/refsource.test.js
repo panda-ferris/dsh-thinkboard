@@ -92,3 +92,20 @@ test('发送序列化:非本来源的 ref 原样返回;clipboardText 原样', as
   assert.equal(src.codec.clipboardText('@[a](dsh-thinkboard:b1/n1)'), '@[a](dsh-thinkboard:b1/n1)')
   assert.deepEqual(parseRef(chipFor('b1', board.nodes[0]).ref).nodeId, 'n1')
 })
+
+test('候选:输入框里已有的元素不再出现在 @ 菜单里', async () => {
+  const have = new Set(['b1/n1'])
+  const { src } = mk({ getPresent: () => have })
+  assert.deepEqual((await src.candidates({}, { query: '', signal: sig })).map((r) => r.name), ['支付', 'SAML 备选'])
+})
+
+test('选择候选:已在输入框里 → 不插入(返回 handled),不会产生重复对象', async () => {
+  const { src } = mk({ getPresent: () => new Set(['b1/n1']) })
+  assert.equal(src.onPick({ candidate: { value: JSON.stringify({ boardId: 'b1', nodeId: 'n1' }) }, session: {} }), 'handled')
+  assert.ok(src.onPick({ candidate: { value: JSON.stringify({ boardId: 'b1', nodeId: 'n2' }) }, session: {} }).insert)
+})
+
+test('候选:getPresent 抛错或缺省时按"没有已存在对象"处理,不影响列表', async () => {
+  const { src } = mk({ getPresent: () => new Set() })
+  assert.equal((await src.candidates({}, { query: '', signal: sig })).length, 3)
+})

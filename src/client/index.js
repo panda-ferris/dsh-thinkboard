@@ -5,6 +5,7 @@ import React from 'react'
 import { Panel } from './panel.js'
 import { createStore } from './store.js'
 import { createReferenceSource } from './refsource.js'
+import { presentKeys } from './chatref.js'
 import { createFocusBus } from './focusbus.js'
 import { transport } from './transport.js'
 import css from './styles.css'
@@ -56,6 +57,14 @@ export function apply(ctx) {
     getBoard: () => store.getState().board,
     openBoard: async (id) => (await transport.open(id)).board,
     focusBus, t,
+    // 该会话输入框里已有的对象(用于候选去重)
+    getPresent: (session) => {
+      try {
+        const scoped = ctx.sessions.scope(session?.sessionId)
+        const shell = scoped?.get?.('conversation')?.input?.for?.(scoped)
+        return presentKeys(shell?.draftSnapshot?.references)
+      } catch { return new Set() }
+    },
   })
   ctx.effect(() => inputTriggers.registerSource(source), 'thinkboard: @ reference source')
 
@@ -73,7 +82,7 @@ export function apply(ctx) {
 }
 
 const ZH = {
-  'chatref.section': '白板元素', 'chatref.attached': '已把 {count} 个元素加入输入框', 'chatref.blocked': '输入框正在发送,稍后再试', 'chatref.focusMissing': '这个元素已不在白板上',
+  'chatref.section': '白板元素', 'chatref.attached': '已把 {count} 个元素加入输入框', 'chatref.blocked': '输入框正在发送,稍后再试', 'chatref.duplicate': '这些元素已经在输入框里了', 'chatref.attachedSkipped': '已加入 {count} 个,另有 {skipped} 个已在输入框中', 'chatref.focusMissing': '这个元素已不在白板上',
   'tool.panel': '工具栏', 'tool.zoom': '缩放比例',
   'title.edit': '白板标题', 'title.hint': '双击修改标题', 'minimap.open': '展开小地图', 'minimap.close': '收起小地图',
   'cluster.group': '组合', 'cluster.ungroup': '取消组合', 'cluster.enter': '双击进入组合',
@@ -111,7 +120,7 @@ const ZH = {
   'chat.contextHeader': '白板「{board}」(id: {id})中我选中的元素:',
 }
 const EN = {
-  'chatref.section': 'Board elements', 'chatref.attached': 'Added {count} item(s) to the input', 'chatref.blocked': 'The input is busy sending; try again in a moment', 'chatref.focusMissing': 'This element is no longer on the board',
+  'chatref.section': 'Board elements', 'chatref.attached': 'Added {count} item(s) to the input', 'chatref.blocked': 'The input is busy sending; try again in a moment', 'chatref.duplicate': 'Those items are already in the input', 'chatref.attachedSkipped': 'Added {count}; {skipped} already in the input', 'chatref.focusMissing': 'This element is no longer on the board',
   'tool.panel': 'Toolbar', 'tool.zoom': 'Zoom level',
   'title.edit': 'Board title', 'title.hint': 'Double-click to rename', 'minimap.open': 'Show minimap', 'minimap.close': 'Hide minimap',
   'cluster.group': 'Group', 'cluster.ungroup': 'Ungroup', 'cluster.enter': 'Double-click to enter the group',

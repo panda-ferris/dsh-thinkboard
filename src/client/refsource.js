@@ -1,10 +1,10 @@
 // 输入框 `@` 来源:候选列表、选择后插入对象、点击聚焦、发送时序列化。
 // 抽成工厂是为了不依赖 dsh 就能测试;apply() 只负责把它注册进 inputTriggers。
-import { SOURCE, parseRef, serializeRef, labelOf, chipFor } from './chatref.js'
+import { SOURCE, parseRef, serializeRef, labelOf, chipFor, presentKeys } from './chatref.js'
 
 export const MAX_CANDIDATES = 30
 
-export function createReferenceSource({ getBoard, openBoard, focusBus, t }) {
+export function createReferenceSource({ getBoard, openBoard, focusBus, t, getPresent = () => new Set() }) {
   return {
     trigger: '@',
     name: SOURCE,
@@ -16,7 +16,9 @@ export function createReferenceSource({ getBoard, openBoard, focusBus, t }) {
       if (!board) return []
       const q = String(query || '').trim().toLowerCase()
       const rows = []
+      const have = getPresent(_session)             // 输入框里已有的对象:不再出现在候选里
       for (const n of board.nodes) {
+        if (have.has(`${board.id}/${n.id}`)) continue
         const label = labelOf(n)
         const hay = `${label} ${n.title ?? ''} ${n.label ?? ''} ${typeof n.text === 'string' ? n.text.slice(0, 200) : ''} ${n.id}`.toLowerCase()
         if (q && !hay.includes(q)) continue
@@ -25,12 +27,13 @@ export function createReferenceSource({ getBoard, openBoard, focusBus, t }) {
       }
       return signal?.aborted ? [] : rows
     },
-    onPick({ candidate }) {
+    onPick({ candidate, session }) {
       let v
       try { v = JSON.parse(candidate.value) } catch { return undefined }
       const board = getBoard()
       const node = board?.nodes.find((n) => n.id === v?.nodeId)
       if (!board || board.id !== v.boardId || !node) return undefined
+      if (getPresent(session).has(`${board.id}/${node.id}`)) return 'handled'   // 已在输入框里:什么都不插入
       return { insert: chipFor(board.id, node) }
     },
     // 点击输入框里的引用对象:请求面板聚焦(必要时先切换白板)

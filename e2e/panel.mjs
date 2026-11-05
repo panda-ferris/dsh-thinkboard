@@ -145,7 +145,33 @@ try {
       check('对象来源为 thinkboard,外观为会话图标', refs.every((r) => r.source === 'thinkboard' && r.appearance === 'session'))
       check('对象的 ref 自带白板 id 与元素 id', refs[0].ref === '@[登录方案](dsh-thinkboard:b1/c1)', refs[0].ref)
       check('不带附件 id(没有附件被创建)', JSON.stringify(calls[0].ids) === '[]')
-      check('成功后给出"已加入"提示', (await ev(`document.querySelector('.wb-chat-note')?.textContent`)) === 'chatref.attached') }
+      check('成功后给出"已加入"提示', (await ev(`document.querySelector('.wb-chat-note')?.textContent`)) === 'chatref.attached')
+      check('输入框里现在有 2 个对象', JSON.parse(await fake('chips')).length === 2) }
+    const clickAttach = async () => { await ev(`[...document.querySelectorAll('.wb-chat-ctx button')].find(b=>b.textContent==='chat.attach').click()`); await sleep(250) }
+    const note = () => ev(`document.querySelector('.wb-chat-note')?.textContent ?? null`)
+    // ---- 去重:同一个对象不能被重复加入 ----
+    await ev(`window.__fake.calls.length=0`)
+    await clickAttach()
+    check('重复点击:相同的两个元素不会再加入第二份', JSON.parse(await fake('chips')).length === 2 && JSON.parse(await fake('calls')).length === 0, JSON.stringify(JSON.parse(await fake('chips')).map((c) => c.label)))
+    check('重复点击:提示"这些元素已经在输入框里了"', (await note()) === 'chatref.duplicate')
+    await ev(`window.__pstore.select(['c1','c3'])`); await sleep(250)
+    await clickAttach()
+    { const labels = JSON.parse(await fake('chips')).map((c) => c.label)
+      check('部分重复:只加入新的那个(框 c3),c1 不重复', labels.length === 3 && labels.filter((l) => l === '登录方案').length === 1 && labels.includes('第一阶段'), JSON.stringify(labels))
+      check('部分重复:提示"已加入 1 个,另有 1 个已在输入框中"', (await note()) === 'chatref.attachedSkipped') }
+    { const calls = JSON.parse(await fake('calls')); check('部分重复:addFiles 只收到新的那个', calls.length === 1 && calls[0].refs.length === 1 && calls[0].refs[0].label === '第一阶段') }
+    // 用户在输入框里删掉一个对象后,又可以再加入
+    await ev(`window.__fake.chips.splice(0, 1)`)
+    await ev(`window.__pstore.select(['c1'])`); await sleep(250)
+    await clickAttach()
+    check('删掉对象后可以重新加入', JSON.parse(await fake('chips')).filter((c) => c.label === '登录方案').length === 1 && (await note()) === 'chatref.attached')
+    // 元素改了标题后仍视为同一个
+    await ev(`window.__pstore.dispatch([{op:'updateNode',id:'c1',patch:{title:'改过的标题'}}])`); await sleep(300)
+    await clickAttach()
+    check('元素改过标题后再点:仍判定为重复(按元素 id 判断)', JSON.parse(await fake('chips')).filter((c) => /dsh-thinkboard:b1\/c1\)/.test(c.ref)).length === 1 && (await note()) === 'chatref.duplicate')
+    await ev(`window.__pstore.dispatch([{op:'updateNode',id:'c1',patch:{title:'登录方案'}}])`); await sleep(200)
+    await ev(`window.__fake.chips.length=0; window.__fake.calls.length=0`)
+    await ev(`window.__pstore.select(['c1','c2'])`); await sleep(250)
     // 输入框忙(正在发送)
     await ev(`window.__fake.shellBusy=true; window.__fake.calls.length=0; window.__fake.chips.length=0`)
     await ev(`window.__pstore.select(['c1'])`); await sleep(200)

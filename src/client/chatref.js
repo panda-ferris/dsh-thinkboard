@@ -70,3 +70,32 @@ export function chipsForSelection(board, ids) {
   const set = new Set(ids)
   return board.nodes.filter((n) => set.has(n.id)).map((n) => chipFor(board.id, n))
 }
+
+// ---------------- 去重 ----------------
+/** 输入框里已有的"同一个元素"的引用 id 集合(key = 白板id/元素id)。label 不参与:改过标题的同一元素仍算重复。 */
+export function presentKeys(references) {
+  const keys = new Set()
+  for (const r of references ?? []) {
+    if (r?.source !== SOURCE) continue
+    const p = parseRef(r.ref)
+    if (p) keys.add(`${p.boardId}/${p.nodeId}`)
+  }
+  return keys
+}
+
+/**
+ * 从一批待加入的对象里去掉输入框已有的,以及这批里自身重复的。
+ * 返回 { fresh: 真正要加的, skipped: 被跳过的数量 }。
+ */
+export function dedupeChips(chips, references) {
+  const have = presentKeys(references)
+  const fresh = []
+  for (const c of chips) {
+    const p = parseRef(c.ref)
+    const key = p ? `${p.boardId}/${p.nodeId}` : c.ref
+    if (have.has(key)) continue
+    have.add(key)
+    fresh.push(c)
+  }
+  return { fresh, skipped: chips.length - fresh.length }
+}
