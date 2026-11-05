@@ -156,7 +156,7 @@ export function pasteOps(payload, { boardId, at, offset = 32, newId }) {
  * 返回 { target, inside, leaving }(leaving:原本在某框内、现在要离开的节点)。
  */
 export const DROP_SLACK = 40       // 进入:中心距框边在此范围内也算(world 单位)
-export const DROP_SLACK_OUT = 80   // 已在框里时,离开需要走出这个更大的范围
+export const DROP_SLACK_OUT = 120  // 已在框里时,离开需要走出这个更大的范围(迟滞)
 
 export function dropTarget(board, movedIds, dx, dy, { slack = DROP_SLACK, slackOut = DROP_SLACK_OUT, prev = null } = {}) {
   const moved = new Set(movedIds)

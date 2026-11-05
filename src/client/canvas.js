@@ -12,7 +12,7 @@ import { quickAddPlan, SHAPE_DEFAULT_SIZE } from '../core/shapes.js'
 import { shapeStroke } from './colors.js'
 import { containedBy } from '../core/ops.js'
 import { selectionUnitFor, enterScope, expandToUnits, unitsOf, groupOps, ungroupOps, scaleOps, clusterPath, bounds as clusterBounds, remapClusters } from '../core/cluster.js'
-import { copyPayload, parsePayload, pasteOps, dropTarget as calcDrop, memberCount, growFrameToFit, bystandersOf } from '../core/arrange.js'
+import { copyPayload, parsePayload, pasteOps, dropTarget as calcDrop, memberCount, growFrameToFit, bystandersOf, DROP_SLACK, DROP_SLACK_OUT } from '../core/arrange.js'
 import { uid } from '../core/model.js'
 import { NodeView } from './nodes.js'
 import { ContextBar, Minimap, SearchBox, Lightbox, useSize } from './overlays.js'
@@ -317,7 +317,7 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
       }
       // 拖到框上:高亮目标框并提示;从框里拖出:提示"将移出"。归属由几何决定,所以这里只是预览。
       // 缓冲带按屏幕像素计(缩放后手感一致);上一次的目标框传回去做迟滞,避免边界抖动
-      const drop = calcDrop(board, d.roots, dx, dy, { slack: 40 / k, slackOut: 80 / k, prev: d.lastTarget ?? null })
+      const drop = calcDrop(board, d.roots, dx, dy, { slack: DROP_SLACK / k, slackOut: DROP_SLACK_OUT / k, prev: d.lastTarget ?? null })
       d.lastTarget = drop.target
       const dropGroup = drop.target
       const leaving = drop.leaving.filter((x) => x.groupId !== dropGroup).map((x) => x.groupId)

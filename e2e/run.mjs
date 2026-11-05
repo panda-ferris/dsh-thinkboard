@@ -1563,6 +1563,25 @@ try {
     await mouse('mouseReleased', p0.x + 480, p0.y, { modifiers: 1 }); await sleep(250)
     const g1 = await gnode('QF'); const m1 = await gnode('qf_in')
     check('松手后卡片已在框外,框大小未变', m1.x > g1.x + g1.width && g1.width === g0.width, JSON.stringify({ g1: [g1.width], m1: [m1.x] })) }
+  { // 迟滞 120:已放入的卡片,中心走到离框边 100px 仍保持"放入";超过 120px 才离开
+    const liveBox = (id) => ev(`(()=>{const e=document.querySelector('[data-wb-node="${id}"]');return {w:parseFloat(e.style.width),drop:e.classList.contains('is-drop'),leaving:e.classList.contains('is-leaving')}})()`)
+    await reset([GF('HY', 100, 100, 300, 220), T('hy_mv', 700, 200, 140, 70)]); await sleep(200)   // 框右边 x=400;卡片中心 x=770
+    const p0 = await P('hy_mv'); await mouse('mousePressed', p0.x, p0.y, { modifiers: 1 })
+    const goTo = async (cx) => { const cur = await P('hy_mv'); const tx = p0.x - (770 - cx); for (let i = 1; i <= 4; i++) await mouse('mouseMoved', cur.x + (tx - cur.x) * i / 4, p0.y, { modifiers: 1 }); await sleep(60) }
+    await goTo(390)                                  // 先进入框(中心在框内)
+    check('先进入:框接收', (await liveBox('HY')).drop)
+    await goTo(400 + 100)                            // 往外走到离框边 100px:已被接收,迟滞范围内
+    const near = await liveBox('HY')
+    check('已放入后向外走到离框边 100px(迟滞 120 之内):仍保持放入', near.drop && !near.leaving, JSON.stringify(near))
+    await goTo(400 + 140)                            // 走到 140px:超出迟滞
+    const far = await liveBox('HY')
+    check('走到离框边 140px(超出迟滞 120):才判定离开,框恢复', !far.drop && far.w === 300, JSON.stringify(far))
+    await goTo(400 + 100)                            // 退回 100px:此时已不是"已放入"状态,要回到缓冲带(40)内才重新接收
+    const back = await liveBox('HY')
+    check('离开后退回 100px:不会立刻重新吸住(需回到进入范围 40px 内)', !back.drop, JSON.stringify(back))
+    await goTo(400 + 20)
+    check('回到进入范围内:重新接收', (await liveBox('HY')).drop)
+    await mouse('mouseReleased', (await P('hy_mv')).x, p0.y, { modifiers: 1 }); await sleep(200) }
   { // 缓冲带随缩放按屏幕像素计算:缩小到 50% 后,越界 30 屏幕像素仍在缓冲带内
     await reset([GF('RF', 100, 100, 300, 220), T('rf_mv', 700, 200, 140, 70)]); await ev(`window.__wb.store.setViewport({x:40,y:20,k:0.5})`); await sleep(250)
     const g0 = await gnode('RF'); const p0 = await P('rf_mv')

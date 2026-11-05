@@ -117,7 +117,7 @@ test('paste: 指定中心点;跨白板丢弃图片卡片及其连线;非法内�
   assert.equal(parsePayload('dsh-thinkboard/v1:{bad'), null)
 })
 
-import { dropTarget, memberCount } from '../src/core/arrange.js'
+import { dropTarget, memberCount, DROP_SLACK, DROP_SLACK_OUT } from '../src/core/arrange.js'
 
 const GB = () => make(
   { op: 'addNode', node: { id: 'g1', type: 'group', x: 0, y: 0, width: 400, height: 300 } },
@@ -135,9 +135,9 @@ test('dropTarget: 边界值——框内与缓冲带内算放入,出了缓冲带�
   const b = make({ op: 'addNode', node: { id: 'g', type: 'group', x: 0, y: 0, width: 400, height: 300 } }, T('c', 600, 100, 100, 60))
   assert.equal(dropTarget(b, ['c'], -250, 0).target, 'g')                    // 中心 x=400,正好在框边上
   assert.equal(dropTarget(b, ['c'], -249, 0).target, 'g')                    // 中心 x=401:越界 1px,仍在缓冲带内(框会跟着长)
-  assert.equal(dropTarget(b, ['c'], -250 + 40, 0).target, 'g')               // 越界 40px = 缓冲带边缘
-  assert.equal(dropTarget(b, ['c'], -250 + 41, 0).target, null)              // 越界 41px:出了缓冲带
-  assert.equal(dropTarget(b, ['c'], -250 + 41, 0, { slack: 0, slackOut: 0 }).target, null)
+  assert.equal(dropTarget(b, ['c'], -250 + DROP_SLACK, 0).target, 'g')       // 越界 = 缓冲带边缘
+  assert.equal(dropTarget(b, ['c'], -250 + DROP_SLACK + 1, 0).target, null)  // 出了缓冲带
+  assert.equal(dropTarget(b, ['c'], -250 + DROP_SLACK + 1, 0, { slack: 0, slackOut: 0 }).target, null)
   assert.equal(dropTarget(b, ['c'], -249, 0, { slack: 0, slackOut: 0 }).target, null, 'slack=0 时退回严格几何判定')
 })
 
@@ -277,25 +277,33 @@ test('框扩张:没有邻居阻挡时仍完整包住(行为与无邻居版本一
 const BF = () => make({ op: 'addNode', node: { id: 'F', type: 'group', x: 100, y: 100, width: 300, height: 220 } }, T('mv', 700, 200, 140, 70), T('ex', 130, 150, 100, 60))
 // 卡片宽 140:中心 x = 770 + dx;框右边 x=400
 
+const EDGE = 400                                   // BF 的框右边
+const dxFor = (cx) => cx - 770                     // 卡片中心从 770 移到 cx
+
 test('dropTarget 缓冲带:中心越过框原边界一点点,仍判定为放入(框来得及跟着长)', () => {
   const b = BF()
-  assert.equal(dropTarget(b, ['mv'], 380 - 770, 0).target, 'F')   // 框内
-  assert.equal(dropTarget(b, ['mv'], 410 - 770, 0).target, 'F')   // 越界 10
-  assert.equal(dropTarget(b, ['mv'], 439 - 770, 0).target, 'F')   // 越界 39,仍在缓冲带内
+  assert.equal(dropTarget(b, ['mv'], dxFor(380), 0).target, 'F')                          // 框内
+  assert.equal(dropTarget(b, ['mv'], dxFor(EDGE + 10), 0).target, 'F')                    // 越界 10
+  assert.equal(dropTarget(b, ['mv'], dxFor(EDGE + DROP_SLACK - 1), 0).target, 'F')        // 缓冲带内最后 1px
 })
 
 test('dropTarget 缓冲带:超出缓冲带视为离开', () => {
   const b = BF()
-  assert.equal(dropTarget(b, ['mv'], 441 - 770, 0).target, null)
-  assert.equal(dropTarget(b, ['mv'], 600 - 770, 0).target, null)
+  assert.equal(dropTarget(b, ['mv'], dxFor(EDGE + DROP_SLACK + 1), 0).target, null)
+  assert.equal(dropTarget(b, ['mv'], dxFor(600), 0).target, null)
 })
 
 test('dropTarget 迟滞:已放入时,需要走出更宽的范围才算离开(进入容易、离开难)', () => {
   const b = BF()
-  assert.equal(dropTarget(b, ['mv'], 460 - 770, 0).target, null)                       // 没放入过:460 在缓冲带外
-  assert.equal(dropTarget(b, ['mv'], 460 - 770, 0, { prev: 'F' }).target, 'F')         // 已放入:460 仍算在里面
-  assert.equal(dropTarget(b, ['mv'], 479 - 770, 0, { prev: 'F' }).target, 'F')
-  assert.equal(dropTarget(b, ['mv'], 481 - 770, 0, { prev: 'F' }).target, null)        // 走出 80 才离开
+  const out = EDGE + DROP_SLACK + 20                                                      // 没放入过时已在缓冲带外
+  assert.equal(dropTarget(b, ['mv'], dxFor(out), 0).target, null)
+  assert.equal(dropTarget(b, ['mv'], dxFor(out), 0, { prev: 'F' }).target, 'F')           // 已放入:仍算在里面
+  assert.equal(dropTarget(b, ['mv'], dxFor(EDGE + DROP_SLACK_OUT - 1), 0, { prev: 'F' }).target, 'F')
+  assert.equal(dropTarget(b, ['mv'], dxFor(EDGE + DROP_SLACK_OUT + 1), 0, { prev: 'F' }).target, null)   // 走出迟滞范围才离开
+})
+
+test('迟滞范围必须大于进入范围,否则没有迟滞效果', () => {
+  assert.ok(DROP_SLACK_OUT > DROP_SLACK)
 })
 
 test('dropTarget 缓冲带:严格落在框内的优先于只在缓冲带里的(相邻框不抢)', () => {
@@ -311,14 +319,15 @@ test('dropTarget 缓冲带:严格落在框内的优先于只在缓冲带里的(�
 
 test('dropTarget 缓冲带:按屏幕像素换算(slack 随缩放传入)', () => {
   const b = BF()
-  // 缩放 0.5:屏幕 40px = world 80;中心越界 70 仍在缓冲带内
-  assert.equal(dropTarget(b, ['mv'], 470 - 770, 0, { slack: 80, slackOut: 160 }).target, 'F')
-  assert.equal(dropTarget(b, ['mv'], 490 - 770, 0, { slack: 80, slackOut: 160 }).target, null)
+  // 缩放 0.5:屏幕像素换算成 world 要放大 2 倍
+  const k = 0.5, o = { slack: DROP_SLACK / k, slackOut: DROP_SLACK_OUT / k }
+  assert.equal(dropTarget(b, ['mv'], dxFor(EDGE + DROP_SLACK / k - 1), 0, o).target, 'F')
+  assert.equal(dropTarget(b, ['mv'], dxFor(EDGE + DROP_SLACK / k + 1), 0, o).target, null)
 })
 
 test('缓冲带内松手:归属与预览一致——卡片中心确实在(已扩大的)框内', () => {
   const b = BF()
-  for (const cx of [380, 410, 439]) {
+  for (const cx of [380, 410, EDGE + DROP_SLACK - 1]) {
     const dx = cx - 770
     assert.equal(dropTarget(b, ['mv'], dx, 0).target, 'F')
     const r = applyOps(b, [{ op: 'moveNodes', ids: ['mv'], dx, dy: 0 }, ...dropIntoFrameOps(b, 'F', ['mv'], dx, 0)]).board
