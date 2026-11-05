@@ -1592,6 +1592,57 @@ try {
     const live = await ev(`(()=>{const e=document.querySelector('[data-wb-node="RF"]');return {w:parseFloat(e.style.width),drop:e.classList.contains('is-drop')}})()`)
     check('画布缩放 50% 时同样生效(缓冲带按屏幕像素计)', live.drop && live.w > g0.width, JSON.stringify(live))
     await mouse('mouseReleased', p0.x + dxScreen, p0.y, { modifiers: 1 }); await sleep(200) }
+
+  console.log('表格:单元格里的列表在存盘与重新渲染后不丢(KM / 飞书粘贴场景)')
+  { // 往返:HTML 粘贴 → 编辑器 → 存盘的 Markdown → 重新读入 → 结构应一致
+    const mdOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const render = (id) => ev(`document.querySelector('[data-wb-node="${id}"] .wb-body')?.innerHTML ?? ''`)
+    const cellShape = (id) => ev(`(()=>{const td=document.querySelector('[data-wb-node="${id}"] .wb-body td, [data-wb-node="${id}"] .wb-body th');return null})()`)
+    const tableHtml = '<table><tbody><tr><th><p>列一</p></th><th><p>列二</p></th></tr><tr><td><p>实验看板</p><ul><li><p>RTA 实验</p></li></ul><ol><li><p>分渠道</p></li><li><p>号码包</p><ul><li><p>子项</p></li></ul></li></ol></td><td><ol><li><p>增加</p><ol><li><p>测试</p></li></ol></li><li><p>减少</p></li></ol></td></tr></tbody></table>'
+    await reset([T('tbl', 100, 100, 520, 360, { title: '表格测试', text: '' })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250)
+    // 1) 进入编辑,模拟从外部粘贴一段 HTML
+    await ev(`window.__wb.store.select(['tbl']); window.__wb.store.setEditing('tbl')`); await sleep(500)
+    await ev(`(()=>{const ed=document.querySelector('[data-wb-node="tbl"] .ProseMirror');ed.focus();const dt=new DataTransfer();dt.setData('text/html',${JSON.stringify(tableHtml)});dt.setData('text/plain','a\tb');ed.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}))})()`); await sleep(400)
+    const inEdit = await ev(`(()=>{const c=[...document.querySelectorAll('[data-wb-node="tbl"] .ProseMirror td')][0];return c?{ul:c.querySelectorAll('ul').length,ol:c.querySelectorAll('ol').length,nestedOl:c.querySelectorAll('ol ul').length}:null})()`)
+    check('粘贴后编辑态:单元格里有无序列表、有序列表和嵌套的子列表', !!inEdit && inEdit.ul >= 1 && inEdit.ol >= 1 && inEdit.nestedOl >= 1, JSON.stringify(inEdit))
+    // 2) 离开编辑(提交)
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600)
+    const saved = await mdOf('tbl')
+    check('存盘内容是 <table> HTML(而不是被压扁的 "a<br>- b")', /<table>/.test(saved) && !/<br>-\s|<br>\d+\./.test(saved), saved.slice(0, 160))
+    check('存盘里保留了嵌套的列表结构', /<ol><li><p>分渠道<\/p><\/li><li><p>号码包<\/p><ul><li><p>子项<\/p><\/li><\/ul><\/li><\/ol>/.test(saved))
+    // 3) 渲染态:列表结构正确(用户反馈的"离开后渲染不正常")
+    const viewed = await ev(`(()=>{const c=document.querySelector('[data-wb-node="tbl"] .wb-body td');return c?{ul:c.querySelectorAll('ul').length,ol:c.querySelectorAll('ol').length,nestedUl:c.querySelectorAll('ol ul').length,nestedOl:c.querySelectorAll('ol ol').length,text:c.textContent}:null})()`)
+    check('离开编辑后渲染:仍是真列表,嵌套层级与粘贴时一致', !!viewed && viewed.ul >= 1 && viewed.ol >= 1 && viewed.nestedUl >= 1, JSON.stringify(viewed))
+    check('渲染态单元格里没有残留的 "<br>" 或 "- " 文本', !!viewed && !/<br>|(^|\s)- /.test(viewed.text), viewed?.text)
+    const second = await ev(`(()=>{const c=[...document.querySelectorAll('[data-wb-node="tbl"] .wb-body td')][1];return c?{ol:c.querySelectorAll('ol').length,nestedOl:c.querySelectorAll('ol ol').length}:null})()`)
+    check('第二列的嵌套有序列表也保持两级', !!second && second.ol >= 2 && second.nestedOl >= 1, JSON.stringify(second))
+    // 4) 再次进入编辑再离开:结构稳定(幂等),不会一次次变形
+    await ev(`window.__wb.store.select(['tbl']); window.__wb.store.setEditing('tbl')`); await sleep(500)
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(500)
+    check('再次进入并离开编辑:存盘内容不变(幂等)', (await mdOf('tbl')) === saved)
+    // 5) 简单表格仍存标准 Markdown
+    await reset([T('tbl2', 100, 100, 420, 200, { text: '| a | b |\n| --- | --- |\n| 1 | 2 |' })]); await sleep(250)
+    await ev(`window.__wb.store.select(['tbl2']); window.__wb.store.setEditing('tbl2')`); await sleep(500)
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(500)
+    const simple = await mdOf('tbl2')
+    check('简单表格仍存标准 GFM(不会被无谓地转成 HTML)', /\|\s*a\s*\|\s*b\s*\|/.test(simple) && !/<table>/.test(simple), simple)
+    // 6) 已经是 HTML 的表格读写往返
+    await reset([T('tbl3', 100, 100, 520, 300, { text: '前文\n\n' + tableHtml + '\n\n后文' })]); await sleep(400)
+    const view3 = await ev(`(()=>{const b=document.querySelector('[data-wb-node="tbl3"] .wb-body');return {table:b.querySelectorAll('table').length,ul:b.querySelectorAll('td ul').length,ol:b.querySelectorAll('td ol').length,text:b.textContent.includes('前文')&&b.textContent.includes('后文')}})()`)
+    check('读取含 <table> 的 Markdown:渲染成真表格与真列表,前后文保留', view3.table === 1 && view3.ul >= 1 && view3.ol >= 1 && view3.text, JSON.stringify(view3))
+    await ev(`window.__wb.store.select(['tbl3']); window.__wb.store.setEditing('tbl3')`); await sleep(500)
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(500)
+    const saved3 = await mdOf('tbl3')
+    check('未做修改就退出编辑:内容不被改写成别的形态', /前文/.test(saved3) && /后文/.test(saved3) && /<table>/.test(saved3) && /<ol><li><p>分渠道/.test(saved3), saved3.slice(0, 120))
+    // 7) 在单元格里继续编辑:Tab 缩进列表项
+    await ev(`window.__wb.store.select(['tbl3']); window.__wb.store.setEditing('tbl3')`); await sleep(500)
+    await ev(`(()=>{const ed=document.querySelector('[data-wb-node="tbl3"] .ProseMirror');ed.focus();const w=document.createTreeWalker(ed,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){if(n.textContent==='号码包'){const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r);return}}})()`)
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: 0 }); await sleep(200)
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600)
+    const after = await ev(`(()=>{const c=document.querySelector('[data-wb-node="tbl3"] .wb-body td');return {nestedOl:c.querySelectorAll('ol ol').length}})()`)
+    check('在单元格里按 Tab 缩进列表项:缩进后存盘并渲染出更深一层', after.nestedOl >= 1, JSON.stringify(after))
+    check('编辑后存盘仍是 HTML 表格', /<table>/.test(await mdOf('tbl3')))
+  }
   const shot = await send('Page.captureScreenshot', { format: 'png' })
   await writeFile('e2e/out/shot.png', Buffer.from(shot.result.data, 'base64'))
   check('无未处理错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))

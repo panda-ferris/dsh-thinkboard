@@ -14,6 +14,7 @@ import Image from '@tiptap/extension-image'
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { mergeAdjacentLists } from '../core/listmerge.js'
+import { complexTableMarkdown } from '../core/tablemd.js'
 
 const h = React.createElement
 
@@ -127,10 +128,23 @@ function liftKeepingSiblings(editor, name) {
   }).run()
 }
 
+/**
+ * 表格:简单表格(单元格只有一行文字)存标准 GFM;任一单元格含列表/多段/代码块等块级内容时,
+ * 整张表存 <table> HTML,否则这些结构会在存盘时被压扁成 "a<br>- b<br>1. c"。
+ * 读取不用额外处理:Markdown 里的 <table> 块会被编辑器的 HTML 规则读回,单元格里的列表原样恢复。
+ */
+const RichTable = Table.extend({
+  renderMarkdown(node, helpers, ctx) {
+    const html = complexTableMarkdown(node)
+    if (html !== null) return html
+    return this.parent?.(node, helpers, ctx) ?? ''
+  },
+})
+
 const extensions = () => [
   StarterKit.configure({ link: { openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } } }),
   Markdown,
-  Table, TableRow, TableHeader, TableCell,
+  RichTable, TableRow, TableHeader, TableCell,
   TaskList, TaskItem.configure({ nested: true }),
   Image,
   ListKeys,

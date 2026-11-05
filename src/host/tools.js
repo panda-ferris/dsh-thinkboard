@@ -53,7 +53,7 @@ export function registerTools(ctx, service) {
       '"align" {ids, mode: left|hcenter|right|top|vcenter|bottom}, "distribute" {ids, axis: x|y} (needs 3+), "fit" {groupId} (resize a group to hug its cards), ' +
       '"wrap" {ids, color?} (put cards into a new frame), "collapse"/"expand" {ids} (fold long text cards to a short preview, or restore them), ' +
       '"group" {ids} (combine 2+ elements so they select/move/scale/copy as one; a node\'s `cluster` field lists its groups outer→inner joined by "/"; unlike a frame a group has no title or background), "ungroup" {ids} (dissolve the outermost group of the given elements). Ops (field `op`): ' +
-      'addNode {node:{type:"text"|"html"|"shape"|"group", title?, text?(markdown, for text), html?(for html: shown in a sandbox, scripts and network are blocked, max 200KB), ' +
+      'addNode {node:{type:"text"|"html"|"shape"|"group", title?, text?(markdown, for text; a table whose cells contain lists or several paragraphs is stored as a single-line <table> HTML block with <ul>/<ol>/<p> inside the cells — edit it as HTML and keep it on one line; plain tables stay as | a | b | Markdown), html?(for html: shown in a sandbox, scripts and network are blocked, max 200KB), ' +
       'kind?(for shape: rect|roundRect|ellipse|diamond|parallelogram|trapezoid|cylinder|document|terminator|triangle|hexagon|pentagon|star|arrowRight|bubble|text), ' +
       'text?(plain label for shapes), fill?/stroke?(color name: gray,red,orange,yellow,green,blue,purple, or "none"), dash?(solid|dashed|dotted), strokeWidth?, fontSize?, align?(left|center|right), ' +
       'color?, x?,y?,width?,height?, place?:{rightOf|leftOf|below|above:<nodeId>, gap?}}} — shapes get a sensible default size per kind; ' +
