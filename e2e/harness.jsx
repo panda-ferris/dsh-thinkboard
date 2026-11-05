@@ -6,6 +6,8 @@ import { Toolbar, Panel } from '../src/client/panel.js'
 import { DetailPane } from '../src/client/detail.js'
 import { renderPng, resolveBackground } from '../src/client/export.js'
 import { createStore } from '../src/client/store.js'
+import { createFocusBus } from '../src/client/focusbus.js'
+import { chipsForSelection, parseRef } from '../src/client/chatref.js'
 import { createBoard } from '../src/core/model.js'
 import { applyOps, ensureIds } from '../src/core/ops.js'
 import css from '../src/client/styles.css'
@@ -78,7 +80,15 @@ if (params.get('panel')) {
   const pstore = createStore({ transport: window.__panel.transport, onError: (e) => { errors.push(String(e.message || e)); pRef.current(e) } })
   pstore.onErrorRef = pRef
   window.__pstore = pstore
-  window.__mountPanel = () => createRoot(document.getElementById('root')).render(<Panel store={pstore} transport={window.__panel.transport} t={t} useSessions={() => ({ ids: [], byId: {} })} renderSlot={() => null} SessionProvider={null} ctx={{ sessions: {}, workspaces: {} }} />)
+  // ---- 假的 dsh 输入框服务:接口形状与 dsh 源码一致(sessions.scope → conversation.input.for → shell.addFiles) ----
+  const fake = { calls: [], shellBusy: false, chips: [], forThrows: false, noShell: false, drafts: [], ids: [] }
+  const shell = { addFiles: (refs, ids) => { fake.calls.push({ refs, ids }); if (fake.shellBusy) return false; fake.chips.push(...refs); return true } }
+  const scoped = { get: (k) => (k === 'conversation' ? { input: { for: (c) => { if (fake.forThrows) throw new Error('boom'); if (c !== scoped) throw new Error('wrong scope'); return fake.noShell ? undefined : shell }, requestDraftInitialization: (b, o) => { fake.drafts.push(o); return 'applied' } } } : undefined) }
+  window.__fake = fake
+  window.__focusBus = createFocusBus()
+  const ctxFake = { sessions: { scope: (sid) => (sid === 'S1' ? scoped : undefined), binding: (sid) => (sid === 'S1' ? { sessionId: 'S1' } : undefined), retain: () => ({ sessionId: 'S1', release() {} }) }, workspaces: {}, get: (k) => (k === 'conversation' ? scoped.get('conversation') : undefined) }
+  window.__ctxFake = ctxFake
+  window.__mountPanel = () => createRoot(document.getElementById('root')).render(<Panel store={pstore} transport={window.__panel.transport} t={t} useSessions={() => ({ ids: ['S1'], byId: { S1: { title: '会话一' } } })} renderSlot={() => <div id="fake-chat">chat</div>} SessionProvider={({ children }) => children} ctx={ctxFake} focusBus={window.__focusBus} />)
   document.title = 'READY'
 } else {
 createRoot(document.getElementById('root')).render(<View />)

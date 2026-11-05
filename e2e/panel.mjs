@@ -129,6 +129,65 @@ try {
   check('在列表里改名:列表显示新名', (await listNames()).includes('列表里改的'))
   // 空白状态:没有白板时顶栏无标题可改
   await ev(`window.__panel.db.clear()`)
+
+  console.log('对话引用:以对象(chip)加入输入框 / 点击聚焦')
+  { await ev(`localStorage.clear()`); await load(url)
+    // 两块白板;b1 绑定会话 S1
+    await ev(`(()=>{const p=window.__panel;p.db.clear();p.mk('b1','规划板',[{id:'c1',type:'text',x:100,y:100,width:200,height:100,title:'登录方案',text:'用 OAuth'},{id:'c2',type:'shape',kind:'diamond',x:2000,y:1500,width:160,height:100,text:'已登录?'},{id:'c3',type:'group',x:100,y:400,width:300,height:200,label:'第一阶段'}]);p.mk('b2','另一块',[{id:'d1',type:'text',x:300,y:300,width:200,height:100,title:'别板卡片',text:'x'}]);localStorage.setItem('dsh.thinkboard.sessions.v1',JSON.stringify({b1:'S1',b2:'S1'}));window.__mountPanel()})()`); await sleep(900)
+    const fake = (e) => ev(`JSON.stringify(window.__fake.${e})`)
+    await ev(`window.__pstore.select(['c1','c2'])`); await sleep(250)
+    check('选中元素后,对话区出现"作为上下文带入输入框"', await ev(`!!([...document.querySelectorAll('.wb-chat-ctx button')].find(b=>b.textContent==='chat.attach'))`))
+    await ev(`[...document.querySelectorAll('.wb-chat-ctx button')].find(b=>b.textContent==='chat.attach').click()`); await sleep(250)
+    { const calls = JSON.parse(await fake('calls'))
+      check('点击后调用输入框的 addFiles 一次(而不是写入文本草稿)', calls.length === 1 && JSON.parse(await fake('drafts')).length === 0, JSON.stringify(calls.map((c) => c.refs.length)))
+      const refs = calls[0].refs
+      check('两个选中元素 → 两个对象,顺序按白板顺序', refs.length === 2 && refs[0].label === '登录方案' && refs[1].label === '已登录?', JSON.stringify(refs.map((r) => r.label)))
+      check('对象来源为 thinkboard,外观为会话图标', refs.every((r) => r.source === 'thinkboard' && r.appearance === 'session'))
+      check('对象的 ref 自带白板 id 与元素 id', refs[0].ref === '@[登录方案](dsh-thinkboard:b1/c1)', refs[0].ref)
+      check('不带附件 id(没有附件被创建)', JSON.stringify(calls[0].ids) === '[]')
+      check('成功后给出"已加入"提示', (await ev(`document.querySelector('.wb-chat-note')?.textContent`)) === 'chatref.attached') }
+    // 输入框忙(正在发送)
+    await ev(`window.__fake.shellBusy=true; window.__fake.calls.length=0; window.__fake.chips.length=0`)
+    await ev(`window.__pstore.select(['c1'])`); await sleep(200)
+    await ev(`[...document.querySelectorAll('.wb-chat-ctx button')].find(b=>b.textContent==='chat.attach').click()`); await sleep(250)
+    check('输入框正在发送时:提示稍后再试,不降级成文本', (await ev(`document.querySelector('.wb-chat-note')?.textContent`)) === 'chatref.blocked' && JSON.parse(await fake('drafts')).length === 0)
+    await ev(`window.__fake.shellBusy=false`)
+    // 取不到输入框 → 降级为文本草稿
+    await ev(`window.__fake.noShell=true; window.__fake.calls.length=0`)
+    await ev(`[...document.querySelectorAll('.wb-chat-ctx button')].find(b=>b.textContent==='chat.attach').click()`); await sleep(250)
+    { const d = JSON.parse(await fake('drafts'))
+      check('取不到输入框对象时:降级为文本草稿(功能不丢)', d.length === 1 && /dsh-thinkboard:b1\/c1/.test(d[0].prompt) && d[0].whenDraftExists === 'append', JSON.stringify(d).slice(0, 160)) }
+    // 接口抛错 → 同样降级
+    await ev(`window.__fake.noShell=false; window.__fake.forThrows=true; window.__fake.drafts.length=0`)
+    await ev(`[...document.querySelectorAll('.wb-chat-ctx button')].find(b=>b.textContent==='chat.attach').click()`); await sleep(250)
+    check('输入框接口抛错时:降级为文本草稿,不崩', JSON.parse(await fake('drafts')).length === 1 && errors.length === 0, JSON.stringify(errors))
+    await ev(`window.__fake.forThrows=false`)
+
+    // ---- 点击对象 → 聚焦 ----
+    await ev(`window.__pstore.select([])`); await ev(`window.__pstore.setViewport({x:0,y:0,k:1})`); await sleep(200)
+    await ev(`window.__focusBus.request('b1','c2')`); await sleep(500)
+    { const st = JSON.parse(await ev(`JSON.stringify(window.__pstore.getState().viewport)`)); const sel = await ev(`window.__pstore.getState().selection[0]`)
+      const cv = await ev(`(()=>{const r=document.querySelector('.wb-canvas').getBoundingClientRect();return {w:r.width,h:r.height}})()`)
+      const cx = (2000 + 80) * st.k + st.x, cy = (1500 + 50) * st.k + st.y
+      check('点击引用:视口移到元素(元素中心落在画布中心)', Math.abs(cx - cv.w / 2) < 2 && Math.abs(cy - cv.h / 2) < 2, JSON.stringify({ st, cx, cy, cv }))
+      check('点击引用:元素被选中', sel === 'c2') }
+    // 跨白板:当前是 b1,引用指向 b2
+    await ev(`window.__focusBus.request('b2','d1')`); await sleep(900)
+    check('引用指向另一块白板:自动切换过去并聚焦', (await ev(`window.__pstore.getState().board?.id`)) === 'b2' && (await ev(`window.__pstore.getState().selection[0]`)) === 'd1')
+    check('切换后顶栏标题随之变化', (await ev(`document.querySelector('.wb-board-title')?.textContent`)) === '另一块')
+    // 元素已删除
+    await ev(`window.__focusBus.request('b2','ghost')`); await sleep(500)
+    check('引用的元素已不存在:给出提示,不崩', (await ev(`document.querySelector('.wb-toast')?.textContent`)) === 'chatref.focusMissing' && errors.length === 0)
+    // 白板已删除
+    await ev(`window.__focusBus.request('nope','x')`); await sleep(500)
+    check('引用的白板已不存在:给出提示,不崩', (await ev(`document.querySelector('.wb-toast')?.textContent`)) === 'chatref.focusMissing')
+    check('请求处理完后被清空(不会重复触发)', (await ev(`window.__focusBus.peek()`)) === null)
+    // 聚焦时关闭搜索面板、不改动数据
+    const before = await ev(`JSON.stringify(window.__panel.db.get('b1').board.nodes)`)
+    await ev(`window.__focusBus.request('b1','c1')`); await sleep(900)
+    check('聚焦只移动视口与选择,不修改白板数据', (await ev(`JSON.stringify(window.__panel.db.get('b1').board.nodes)`)) === before)
+  }
+
   check('页面无未处理错误', errors.length === 0, JSON.stringify(errors))
 } finally {
   const fails = results.filter((r) => !r.ok)

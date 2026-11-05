@@ -11,6 +11,8 @@ import { Icon } from './icons.js'
 import { initialImageSize } from '../core/content.js'
 import { DetailPane } from './detail.js'
 import { migrateLegacyKeys } from './storage.js'
+import { chipsForSelection } from './chatref.js'
+import { focusViewport } from '../core/view.js'
 
 migrateLegacyKeys()
 
@@ -29,7 +31,7 @@ function useStore(store) {
 }
 
 export function Panel(props) {
-  const { store, transport, t, useSessions, renderSlot, SessionProvider, ctx } = props
+  const { store, transport, t, useSessions, renderSlot, SessionProvider, ctx, focusBus } = props
   const state = useStore(store)
   const [boards, setBoards] = React.useState([])
   const [err, setErr] = React.useState(null)
@@ -39,9 +41,37 @@ export function Panel(props) {
   const setSide = (patch) => setChat((c) => { const n = { ...c, ...patch }; writeLS(LS_CHAT, n); return n })
   // 打开详情 → 展开右侧并切到详情标签;关闭详情 → 回到对话
   React.useEffect(() => { if (state.detail) setSide({ open: true, tab: 'detail' }); else setChat((c) => (c.tab === 'detail' ? { ...c, tab: 'chat' } : c)) }, [state.detail])
-  const [menu, setMenu] = React.useState(null)
+  // 点击输入框里的引用对象 → 聚焦到白板里对应的元素(必要时先切换白板)。
+  // 请求可能先于面板/白板就绪,所以:订阅 + 白板加载完成后各检查一次。
+  const [focusNote, setFocusNote] = React.useState(null)
   const [search, setSearch] = React.useState(false)
   const [tool, setTool] = React.useState(null)
+  const applyFocus = React.useCallback(() => {
+    const req = focusBus?.peek?.()
+    if (!req) return
+    const st = store.getState()
+    if (st.loading) return
+    if (!st.board || st.board.id !== req.boardId) {
+      // 在列表里就切过去;等加载完成后会再次进入这里
+      if (boardsRef.current.some((b) => b.id === req.boardId)) { open(req.boardId) } else { focusBus.take(); setFocusNote(t('chatref.focusMissing')) }
+      return
+    }
+    focusBus.take()
+    const n = st.board.nodes.find((x) => x.id === req.nodeId)
+    if (!n) { setFocusNote(t('chatref.focusMissing')); return }
+    const canvas = document.querySelector('.wb-canvas')
+    const r = canvas?.getBoundingClientRect()
+    if (r) store.setViewport(focusViewport({ x: n.x, y: n.y, w: n.width, h: n.height }, { w: r.width, h: r.height }))
+    store.select([n.id])
+    setSearch(false)
+  }, [focusBus, store])
+  const boardsRef = React.useRef([])
+  const openRef = React.useRef(() => {})
+  React.useEffect(() => { boardsRef.current = boards }, [boards])
+  React.useEffect(() => (focusBus ? focusBus.subscribe(applyFocus) : undefined), [applyFocus, focusBus])
+  React.useEffect(() => { applyFocus() }, [state.board?.id, state.loading, boards.length])
+  React.useEffect(() => { if (!focusNote) return; const id = setTimeout(() => setFocusNote(null), 2500); return () => clearTimeout(id) }, [focusNote])
+  const [menu, setMenu] = React.useState(null)
   const [renaming, setRenaming] = React.useState(null)
   const [query, setQuery] = React.useState('')
   store.onErrorRef.current = (e) => setErr(e)
@@ -71,6 +101,7 @@ export function Panel(props) {
 
   React.useEffect(() => { setSearch(false); setTool(null) }, [state.board?.id])
   const open = (id) => { writeLS(LS_LAST, id); store.load(id).then(() => { const v = readLS(LS_VIEW, {})[id]; if (v) store.setViewport(v); else requestAnimationFrame(() => fit(store, store.getState())) }) }
+  openRef.current = open
   // 视口变化去抖后存本机
   React.useEffect(() => {
     if (!current) return
@@ -127,6 +158,7 @@ export function Panel(props) {
           ? h(Canvas, { store, state, transport, t, search, setSearch, tool, setTool, detailId: chat.open && chat.tab === 'detail' ? state.detail : null })
           : h('div', { className: 'wb-blank' },
             state.loading ? t('status.loading') : boards.length ? t('canvas.pick') : h('div', null, h('div', null, t('list.empty')), h('button', { className: 'wb-btn wb-primary', onClick: createBoard }, t('list.new')))),
+        focusNote ? h('div', { className: 'wb-toast', role: 'status' }, focusNote) : null,
         err ? h('div', { className: 'wb-error', role: 'alert' }, h('span', null, errText(err, t)), h('button', { className: 'wb-btn', onClick: () => setErr(null) }, '×')) : null)),
 
     chat.open ? h(SidePane, { ...props, boardId: current?.id, chat, setChat, setSide, state }) : null,
@@ -238,6 +270,8 @@ function SidePane(props) {
 function ChatPane({ boardId, chat, setChat, state, t, ctx, renderSlot, SessionProvider, useSessions }) {
   const [ref, setRef] = React.useState(null)
   const [msg, setMsg] = React.useState('')
+  const [note, setNote] = React.useState(null)
+  React.useEffect(() => { if (!note) return; const id = setTimeout(() => setNote(null), 2500); return () => clearTimeout(id) }, [note])
   const sessions = useSessions((s) => s)
   const bound = readLS(LS_BOUND, {})
 
@@ -270,7 +304,7 @@ function ChatPane({ boardId, chat, setChat, state, t, ctx, renderSlot, SessionPr
     !boardId ? h('div', { className: 'wb-chat-empty' }, t('chat.pickBoard'))
       : ref && SessionProvider
         ? h(React.Fragment, null,
-          sel.length ? h('div', { className: 'wb-chat-ctx' }, t('chat.selected', { count: sel.length }), h('button', { className: 'wb-btn', onClick: () => copySelection(ctx, ref, boardId, sel, state.board, t) }, t('chat.attach'))) : null,
+          sel.length ? h('div', { className: 'wb-chat-ctx' }, t('chat.selected', { count: sel.length }), h('button', { className: 'wb-btn', onClick: () => { const r = attachSelection(ctx, ref, state.board, sel.map((n) => n.id), t); setNote(r === 'blocked' ? t('chatref.blocked') : r === 'chips' ? t('chatref.attached', { count: sel.length }) : null) } }, t('chat.attach')), note ? h('span', { className: 'wb-chat-note', role: 'status' }, note) : null) : null,
           h('div', { className: 'wb-chat-body' }, h(SessionProvider, { session: ref }, renderSlot('thinkboard.chat', {}))))
         : h('div', { className: 'wb-chat-empty' },
           h('div', null, t('chat.noSession')),
@@ -286,12 +320,31 @@ function SessionPicker({ sessions, onPick, t }) {
     ids.map((id) => h('button', { key: id, className: 'wb-picker-item', onClick: () => onPick(id) }, sessions.byId[id]?.title || id.slice(0, 8))))
 }
 
-/** 把当前选中的卡片作为文本放进对话输入框草稿,让用户一键带上下文提问。 */
-function copySelection(ctx, ref, boardId, sel, board, t) {
-  const lines = sel.map((n) => `- [${n.id}] ${n.type}${n.title ? ` "${n.title}"` : ''}${n.label ? ` "${n.label}"` : ''}${typeof n.text === 'string' && n.text ? `: ${n.text.slice(0, 300)}` : ''}`)
-  const text = `${t('chat.contextHeader', { board: board.title, id: boardId })}\n${lines.join('\n')}\n`
+/**
+ * 把选中的元素以"对象"(可点击、可删除的 chip)加入对话输入框。
+ *
+ * 路径:sessions.scope(会话) → conversation.input.for(scope) → 输入框 shell.addFiles(chips, [])。
+ *   - addFiles 在光标处批量插入 chip,不要求有附件(ids 传空数组)。
+ *   - 输入框正在发送时返回 false,此时提示用户稍后再试(不降级,免得出现一半是文本一半是对象)。
+ * 取不到输入框(接口变化、会话未就绪)时,降级为纯文本草稿,功能不丢。
+ * 返回 'chips' | 'text' | 'blocked'。
+ */
+export function attachSelection(ctx, ref, board, ids, t) {
+  const chips = chipsForSelection(board, ids)
+  if (!chips.length) return 'blocked'
+  try {
+    // 与 dsh 自带的附件处理同款取法:会话作用域 ctx → conversation 服务 → 该会话的输入框
+    const scoped = ctx.sessions.scope(ref.sessionId)
+    const shell = scoped?.get?.('conversation')?.input?.for?.(scoped)
+    if (shell && typeof shell.addFiles === 'function') {
+      return shell.addFiles(chips, []) ? 'chips' : 'blocked'
+    }
+  } catch { /* 落到文本降级 */ }
+  const lines = chips.map((c) => c.ref)
+  const text = `${t('chat.contextHeader', { board: board.title, id: board.id })}\n${lines.join('\n')}\n`
   try {
     const binding = ctx.sessions.binding(ref.sessionId)
     ctx.get('conversation')?.input?.requestDraftInitialization?.(binding, { prompt: text, whenDraftExists: 'append' })
-  } catch { navigator.clipboard?.writeText(text) }
+    return 'text'
+  } catch { navigator.clipboard?.writeText(text); return 'text' }
 }

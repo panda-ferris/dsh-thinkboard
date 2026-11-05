@@ -340,3 +340,8 @@
 
 .wb-lt-btn:disabled{opacity:.35;cursor:default}
 .wb-lt-btn:disabled:hover{background:transparent}
+
+/* 引用相关的轻提示 */
+.wb-chat-note{margin-left:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+.wb-toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);z-index:40;padding:6px 14px;border-radius:16px;font-size:12px;
+  background:var(--dsw-alias-bg-overlay);border:1px solid var(--wb-line);box-shadow:0 4px 16px rgba(0,0,0,.2);pointer-events:none}

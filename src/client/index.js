@@ -4,6 +4,8 @@
 import React from 'react'
 import { Panel } from './panel.js'
 import { createStore } from './store.js'
+import { createReferenceSource } from './refsource.js'
+import { createFocusBus } from './focusbus.js'
 import { transport } from './transport.js'
 import css from './styles.css'
 
@@ -11,7 +13,7 @@ const h = React.createElement
 const PANEL_ID = 'thinkboard'
 const NS = 'thinkboard'
 
-export const inject = ['slots', 'locale', 'sessions', 'uiConversation', 'uiWorkspace', 'workspaces']
+export const inject = ['slots', 'locale', 'sessions', 'uiConversation', 'uiWorkspace', 'workspaces', 'inputTriggers']
 
 function Icon({ size = 16 }) {
   return h('svg', { viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
@@ -45,11 +47,23 @@ export function apply(ctx) {
     zh: ZH, en: EN,
   }), 'thinkboard: locale')
 
+  const focusBus = createFocusBus()
+
+  // ---- 输入框里的"白板元素引用":点击聚焦、发送时转成模型可读的文本 ----
+  // 外观借用 dsh 的"会话"图标(dsh 只允许 session / file / folder 三种)。
+  const inputTriggers = ctx.get('inputTriggers')
+  const source = createReferenceSource({
+    getBoard: () => store.getState().board,
+    openBoard: async (id) => (await transport.open(id)).board,
+    focusBus, t,
+  })
+  ctx.effect(() => inputTriggers.registerSource(source), 'thinkboard: @ reference source')
+
   const register = ctx.slots.register.bind(ctx.slots)
   const mount = ctx.slots.inject.bind(ctx.slots)
   mount('main', () => register({
     name: 'main', key: PANEL_ID,
-    inject: () => ({ store, transport, t, ctx }),
+    inject: () => ({ store, transport, t, ctx, focusBus }),
     children: { 'thinkboard.chat': { kind: 'single', scope: 'session' } },
   }, Panel))
   mount('thinkboard.chat', () => register({ name: 'thinkboard.chat' }, EmbeddedConversation))
@@ -59,6 +73,7 @@ export function apply(ctx) {
 }
 
 const ZH = {
+  'chatref.section': '白板元素', 'chatref.attached': '已把 {count} 个元素加入输入框', 'chatref.blocked': '输入框正在发送,稍后再试', 'chatref.focusMissing': '这个元素已不在白板上',
   'tool.panel': '工具栏', 'tool.zoom': '缩放比例',
   'title.edit': '白板标题', 'title.hint': '双击修改标题', 'minimap.open': '展开小地图', 'minimap.close': '收起小地图',
   'cluster.group': '组合', 'cluster.ungroup': '取消组合', 'cluster.enter': '双击进入组合',
@@ -96,6 +111,7 @@ const ZH = {
   'chat.contextHeader': '白板「{board}」(id: {id})中我选中的元素:',
 }
 const EN = {
+  'chatref.section': 'Board elements', 'chatref.attached': 'Added {count} item(s) to the input', 'chatref.blocked': 'The input is busy sending; try again in a moment', 'chatref.focusMissing': 'This element is no longer on the board',
   'tool.panel': 'Toolbar', 'tool.zoom': 'Zoom level',
   'title.edit': 'Board title', 'title.hint': 'Double-click to rename', 'minimap.open': 'Show minimap', 'minimap.close': 'Hide minimap',
   'cluster.group': 'Group', 'cluster.ungroup': 'Ungroup', 'cluster.enter': 'Double-click to enter the group',
