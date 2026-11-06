@@ -423,3 +423,14 @@
 
 .wb-slash-dot{width:10px;height:10px;border-radius:50%}
 .wb-slash-types{max-height:300px}
+
+/* ---------- 表格列宽拖拽 ---------- */
+.wb-md .tableWrapper{overflow-x:auto;overflow-y:hidden;padding-bottom:1px}
+.wb-md .tableWrapper::-webkit-scrollbar{height:6px}
+.wb-md .tableWrapper::-webkit-scrollbar-thumb{background:var(--wb-line);border-radius:3px}
+.wb-md-edit.resize-cursor,.wb-md-edit.resize-cursor *{cursor:col-resize !important}
+/* 拖动手柄:列边界上一条细线,拖动时才显示(悬停到边界时库会加上它) */
+.wb-md-edit .column-resize-handle{position:absolute;right:-2px;top:0;bottom:0;width:4px;z-index:20;pointer-events:none;
+  background:var(--wb-accent);opacity:.85;border-radius:2px}
+.wb-md-edit td:not([data-colwidth]):not(.column-resize-dragging),.wb-md-edit th:not([data-colwidth]):not(.column-resize-dragging){min-width:40px}
+.wb-md-edit.is-col-resizing{user-select:none}

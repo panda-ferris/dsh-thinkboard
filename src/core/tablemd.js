@@ -27,7 +27,25 @@ export function isComplexCell(cell) {
 }
 
 export function isComplexTable(table) {
-  return (table?.content ?? []).some((row) => (row.content ?? []).some(isComplexCell))
+  return (table?.content ?? []).some((row) => (row.content ?? []).some((c) => isComplexCell(c) || !!cleanColwidth(c.attrs?.colwidth)))
+}
+
+/** 是否有手动调整过的列宽(GFM 表格没有地方存宽度,有的话整张表要存成 HTML)。 */
+export function hasCustomWidths(table) {
+  return (table?.content ?? []).some((row) => (row.content ?? []).some((c) => !!cleanColwidth(c.attrs?.colwidth)))
+}
+
+export const COL_MIN = 40, COL_MAX = 1200
+/** 列宽属性规整:数组里每项是 COL_MIN~COL_MAX 的整数像素;不合法(null、空、NaN、越界)整体视为没有。 */
+export function cleanColwidth(v) {
+  if (!Array.isArray(v) || v.length === 0) return null
+  const out = []
+  for (const x of v) {
+    const n = Number(x)
+    if (!Number.isFinite(n) || n <= 0) { out.push(0); continue }   // 0 = 该列没设置(合并单元格里部分列未设宽)
+    out.push(Math.round(Math.min(COL_MAX, Math.max(COL_MIN, n))))
+  }
+  return out.some((n) => n > 0) ? out : null
 }
 
 // ---------- 行内:文本 + 标记 ----------
@@ -86,8 +104,10 @@ function cell(c) {
   const tag = c.type === 'tableHeader' ? 'th' : 'td'
   const align = c.attrs?.align ? ` style="text-align:${escAttr(c.attrs.align)}"` : ''
   const span = (c.attrs?.colspan > 1 ? ` colspan="${c.attrs.colspan}"` : '') + (c.attrs?.rowspan > 1 ? ` rowspan="${c.attrs.rowspan}"` : '')
+  const widths = cleanColwidth(c.attrs?.colwidth)
+  const cw = widths ? ` colwidth="${widths.join(',')}"` : ''
   const blocks = c.content?.length ? c.content.map(block).join('') : '<p></p>'
-  return `<${tag}${span}${align}>${blocks}</${tag}>`
+  return `<${tag}${span}${cw}${align}>${blocks}</${tag}>`
 }
 
 /** 整张表 → 单行 <table> HTML(不含换行,避免 Markdown 块被空行截断)。 */
@@ -99,4 +119,18 @@ export function tableToHtml(table) {
 /** 复杂表格存 HTML,简单表格返回 null(由调用方走默认的 GFM 序列化)。块前后留空行,保证被识别为独立的 HTML 块。 */
 export function complexTableMarkdown(table) {
   return isComplexTable(table) ? `\n${tableToHtml(table)}\n` : null
+}
+
+/**
+ * 拖拽列边界时的新列宽。
+ *   startWidth —— 开始拖动时的列宽(world 单位,即 DOM 的 offsetWidth)
+ *   dxScreen   —— 鼠标在屏幕上移动的像素
+ *   scale      —— 屏幕像素 / world 单位(画布缩放比例;表格处在被缩放的画布里)
+ * 库自带的算法直接把屏幕像素当列宽增量,画布缩放不是 100% 时手柄会落后或超前于鼠标;这里除以缩放比例。
+ */
+export function draggedColWidth(startWidth, dxScreen, scale, min = COL_MIN, max = COL_MAX) {
+  const k = Number.isFinite(scale) && scale > 0 ? scale : 1
+  const w = Number(startWidth) + Number(dxScreen) / k
+  if (!Number.isFinite(w)) return Math.round(Math.min(max, Math.max(min, Number(startWidth) || min)))
+  return Math.round(Math.min(max, Math.max(min, w)))
 }

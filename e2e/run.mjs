@@ -2103,6 +2103,96 @@ try {
     check('普通空段落里回车:照常新增一行', (await shape()) === 'p∅ | p∅ | p∅' || (await shape()).startsWith('p∅ | p∅'), await shape())
     await leave()
   }
+  console.log('表格列宽:手动拖拽、存盘、渲染、撤销')
+  { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
+    const press = async (ch) => { const up = ch.toUpperCase(); await send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0), text: ch }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0) }); await sleep(60) }
+    const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const GFM = '| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |'
+    const openTbl = async (text, k = 1) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:30,y:20,k:${k}})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`document.querySelector('[data-wb-node="s"] .ProseMirror').focus()`) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    const first = () => ev(`(()=>{const th=document.querySelector('[data-wb-node="s"] .ProseMirror th');const r=th.getBoundingClientRect();return {w:+r.width.toFixed(1),ow:th.offsetWidth,x:r.right,y:r.top+r.height/2}})()`)
+    const widths = () => ev(`(()=>{const w=[];document.querySelector('[data-wb-node="s"] .ProseMirror').editor.state.doc.firstChild.firstChild.forEach(c=>w.push(c.attrs.colwidth?c.attrs.colwidth.join('+'):'-'));return w.join(' ')})()`)
+    const drag = async (dx, fromX, y) => { await mouse('mouseMoved', fromX, y); await sleep(80); await mouse('mousePressed', fromX, y); for (let i = 1; i <= 5; i++) { await mouse('mouseMoved', fromX + dx * i / 5, y); await sleep(30) } await mouse('mouseReleased', fromX + dx, y); await sleep(250) }
+
+    // ---- 悬停与拖拽(多种缩放下手柄必须跟手) ----
+    for (const k of [1, 0.6, 1.5]) {
+      await openTbl(GFM, k)
+      const b = await first()
+      await mouse('mouseMoved', b.x - 1, b.y); await sleep(100)
+      check(`缩放 ${k}:悬停在列边界,光标变为 col-resize,出现手柄`, (await ev(`getComputedStyle(document.querySelector('[data-wb-node="s"] .ProseMirror')).cursor`)) === 'col-resize' && await ev(`!!document.querySelector('.column-resize-handle')`))
+      const cardBefore = await ev(`(()=>{const c=document.querySelector('[data-wb-node="s"]').getBoundingClientRect();const cv=document.querySelector('.wb-canvas');return [c.left,c.top,cv.scrollLeft,cv.scrollTop].map((v)=>Math.round(v*10)/10)})()`)
+      await drag(100, b.x - 1, b.y)
+      const a = await first()
+      check(`缩放 ${k}:鼠标右移 100 屏幕像素,列在屏幕上宽 ${(a.w - b.w).toFixed(0)}(应≈100,手柄跟手)`, Math.abs((a.w - b.w) - 100) <= 2, JSON.stringify({ b, a }))
+      check(`缩放 ${k}:宽度存进第一列所有单元格的 colwidth(表头与正文一致)`, /^\d+ - -$/.test(await widths()) && (await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror').editor;const v=[];ed.state.doc.firstChild.forEach(r=>v.push(r.firstChild.attrs.colwidth&&r.firstChild.attrs.colwidth[0]));return new Set(v).size===1&&v[0]>0})()`)), await widths())
+      const cardAfter = await ev(`(()=>{const c=document.querySelector('[data-wb-node="s"]').getBoundingClientRect();const cv=document.querySelector('.wb-canvas');return [c.left,c.top,cv.scrollLeft,cv.scrollTop].map((v)=>Math.round(v*10)/10)})()`)
+      check(`缩放 ${k}:拖动列宽前后,卡片位置不变、画布没有被滚动`, JSON.stringify(cardBefore) === JSON.stringify(cardAfter), JSON.stringify({ cardBefore, cardAfter }))
+      check(`缩放 ${k}:拖动列宽没有改变画布视口(没有被当作平移画布)`, JSON.stringify(await ev('window.__wb.store.getState().viewport')) === JSON.stringify({ x: 30, y: 20, k }))
+      await leave()
+    }
+    // ---- 存盘 / 渲染 / 往返 ----
+    await openTbl(GFM); { const b = await first(); await drag(80, b.x - 1, b.y) } ; const w1 = (await widths()).split(' ')[0]; await leave()
+    { const md = await textOf('s')
+      check('调过列宽的表格存成 HTML(GFM 存不下宽度),列宽写在单元格上', /<table>/.test(md) && new RegExp(`<th colwidth="${w1}">`).test(md) && new RegExp(`<td colwidth="${w1}">`).test(md), md.slice(0, 160))
+      check('没调过的列不输出 colwidth', (md.match(/colwidth=/g) || []).length === 2, md.slice(0, 200)) 
+      const v = await ev(`(()=>{const t=document.querySelector('[data-wb-node="s"] .wb-body table');return t?[...t.querySelector('tr').children].map(c=>c.offsetWidth):null})()`)
+      check('渲染态:第一列宽度与拖拽结果一致', !!v && Math.abs(v[0] - Number(w1)) <= 1, JSON.stringify({ v, w1 }))
+      // 再进再出:内容不变
+      await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await leave()
+      check('再次进入并离开编辑:存盘内容不变(幂等)', (await textOf('s')) === md) }
+    // 没调列宽的表格仍存 GFM
+    await openTbl(GFM); await leave()
+    check('没拖过列宽的表格仍存标准 GFM,不无谓转成 HTML', !/<table>/.test(await textOf('s')), await textOf('s'))
+    // 最小宽度:往回拖到很小,被夹在 40
+    await openTbl(GFM); { const b = await first(); await drag(-9999, b.x - 1, b.y) }
+    check('往左拖到极限:列宽不小于最小值 40', Number((await widths()).split(' ')[0]) === 40, await widths())
+    await leave()
+    // 太宽:夹在 1200,表格容器横向滚动,不撑破卡片
+    await openTbl(GFM); { const b = await first(); await drag(5000, b.x - 1, b.y) }
+    check('往右拖到极限:列宽不超过最大值 1200', Number((await widths()).split(' ')[0]) === 1200, await widths())
+    await leave()
+    { const info = await ev(`(()=>{const w=document.querySelector('[data-wb-node="s"] .wb-body .tableWrapper');const c=document.querySelector('[data-wb-node="s"]');return {有容器:!!w,可滚动:!!w&&w.scrollWidth>w.clientWidth,卡片宽:Math.round(c.getBoundingClientRect().width),html:(document.querySelector('[data-wb-node="s"] .wb-body')?.innerHTML||'').slice(0,160)}})()`)
+      check('列很宽时渲染态表格容器可横向滚动,卡片本身宽度不变(480)', info.有容器 && info.可滚动 && info.卡片宽 === 480, JSON.stringify(info)) }
+    // 双击边界恢复
+    await openTbl(GFM); { const b = await first(); await drag(90, b.x - 1, b.y) }
+    { const b = await first(); await mouse('mouseMoved', b.x - 1, b.y); await sleep(100); await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b.x - 1, y: b.y, button: 'left', buttons: 1, clickCount: 2 }); await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x - 1, y: b.y, button: 'left', buttons: 0, clickCount: 2 }); await sleep(250) }
+    check('双击列边界:清除该列的手动宽度,恢复自动', (await widths()) === '- - -', await widths())
+    await leave()
+    check('清除后没有任何手动列宽 → 存回标准 GFM', !/<table>/.test(await textOf('s')), await textOf('s'))
+    // 撤销
+    await openTbl(GFM); { const b = await first(); await drag(100, b.x - 1, b.y) }
+    const mod = /Mac/i.test(await ev('navigator.platform')) ? 4 : 2
+    await key('z', 'KeyZ', 90, { modifiers: mod }); await sleep(250)
+    check('⌘Z 一步撤销整次列宽调整(所有行的该列一起还原)', (await widths()) === '- - -', await widths())
+    await leave()
+    // 与其它内容并存
+    await openTbl('| a | b |\n| --- | --- |\n| - x | y |'); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');const td=ed.querySelector('td p');const r=document.createRange();r.selectNodeContents(td);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    { const b = await first(); await drag(60, b.x - 1, b.y) } ; await leave()
+    check('列宽与单元格内容并存:内容不丢', /<table>/.test(await textOf('s')) && (await textOf('s')).includes('y') && (await textOf('s')).includes('x'), (await textOf('s')).slice(0, 160))
+    // 合并单元格:跨列单元格的 colwidth 是数组
+    const merged = '<table><tbody><tr><th colspan="2" colwidth="150,90"><p>跨两列</p></th><th><p>c</p></th></tr><tr><td colwidth="150"><p>1</p></td><td colwidth="90"><p>2</p></td><td><p>3</p></td></tr></tbody></table>'
+    await reset([T('s', 100, 100, 480, 360, { title: 't', text: merged })]); await sleep(400)
+    check('合并单元格 + 列宽:渲染各列宽度正确(150 / 90)', await ev(`(()=>{const tds=[...document.querySelectorAll('[data-wb-node="s"] .wb-body tbody tr:nth-child(2) td')];return Math.abs(tds[0].offsetWidth-150)<=1&&Math.abs(tds[1].offsetWidth-90)<=1})()`))
+    await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await leave()
+    check('合并单元格 + 列宽:未改动退出,列宽与跨列信息保留', /colspan="2"/.test(await textOf('s')) && /colwidth="150,90"/.test(await textOf('s')), (await textOf('s')).slice(0, 200))
+    // 非法列宽(手写 HTML)被规整,不产生异常
+    await reset([T('s', 100, 100, 480, 360, { title: 't', text: '<table><tbody><tr><th colwidth="abc"><p>a</p></th><th colwidth="-5"><p>b</p></th><th colwidth="99999"><p>c</p></th></tr><tr><td><p>1</p></td><td><p>2</p></td><td><p>3</p></td></tr></tbody></table>' })]); await sleep(400)
+    check('手写了非法列宽(abc、负数、过大):渲染不出错,表格仍可显示', await ev(`document.querySelectorAll('[data-wb-node="s"] .wb-body td').length===3`) && (await ev('window.__wb.errors.length')) === 0)
+    await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await leave()
+    check('非法列宽退出编辑后被规整(无 NaN/负数,过大夹到 1200)', !/NaN|colwidth="-|colwidth="abc/.test(await textOf('s')) && !/colwidth="99999/.test(await textOf('s')), (await textOf('s')).slice(0, 200))
+    // 渲染态不可拖拽
+    await reset([T('s', 100, 100, 480, 360, { title: 't', text: '<table><tbody><tr><th colwidth="200"><p>a</p></th><th><p>b</p></th></tr><tr><td colwidth="200"><p>1</p></td><td><p>2</p></td></tr></tbody></table>' })]); await sleep(400)
+    { const r = await ev(`(()=>{const th=document.querySelector('[data-wb-node="s"] .wb-body th');const b=th.getBoundingClientRect();return {x:b.right,y:b.top+b.height/2}})()`)
+      await mouse('mouseMoved', r.x - 1, r.y); await sleep(100)
+      check('渲染态(非编辑)悬停列边界:没有拖拽手柄', !(await ev(`!!document.querySelector('[data-wb-node="s"] .column-resize-handle')`))) }
+    // 详情面板里同样可用
+    await reset([T('s', 100, 100, 320, 200, { title: '详情', text: GFM })]); await sleep(250)
+    await ev(`window.__wb.store.select(['s']); window.__wb.store.openDetail('s')`); await sleep(600)
+    await ev(`document.querySelector('.wb-detail .ProseMirror').focus()`)
+    { const b = await ev(`(()=>{const th=document.querySelector('.wb-detail .ProseMirror th');const r=th.getBoundingClientRect();return {x:r.right,y:r.top+r.height/2}})()`)
+      await drag(70, b.x - 1, b.y); await sleep(600)
+      check('详情面板里也能拖拽列宽,并写回卡片', /<table>/.test(await textOf('s')) && /colwidth="\d+"/.test(await textOf('s')), (await textOf('s')).slice(0, 120)) }
+  }
   console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }

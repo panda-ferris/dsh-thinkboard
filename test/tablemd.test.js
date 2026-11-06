@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isComplexCell, isComplexTable, tableToHtml, complexTableMarkdown } from '../src/core/tablemd.js'
+import { isComplexCell, isComplexTable, tableToHtml, complexTableMarkdown, hasCustomWidths, cleanColwidth, COL_MIN, COL_MAX, draggedColWidth } from '../src/core/tablemd.js'
 
 const p = (...c) => ({ type: 'paragraph', content: c.map((t) => (typeof t === 'string' ? { type: 'text', text: t } : t)) })
 const li = (...blocks) => ({ type: 'listItem', content: blocks })
@@ -120,4 +120,71 @@ test('单元格里的高亮块:标题里的 < > & 被转义(类型合法时)', (
 test('行内高亮标记在表格 HTML 里输出为 <mark>,与其它标记嵌套顺序固定', () => {
   const t = table(row(cell(p({ type: 'text', text: 'x', marks: [{ type: 'highlight' }, { type: 'bold' }] }), ul(li(p('a'))))))
   assert.ok(tableToHtml(t).includes('<strong><mark>x</mark></strong>'), tableToHtml(t))
+})
+
+const wcell = (w, ...blocks) => ({ type: 'tableCell', attrs: { colwidth: w }, content: blocks.length ? blocks : [p('x')] })
+const whead = (w, ...blocks) => ({ type: 'tableHeader', attrs: { colwidth: w }, content: blocks.length ? blocks : [p('h')] })
+
+test('cleanColwidth: 合法值取整并夹到范围内;没有有效宽度返回 null', () => {
+  assert.deepEqual(cleanColwidth([240]), [240]); assert.deepEqual(cleanColwidth([100.6, 80]), [101, 80])
+  assert.deepEqual(cleanColwidth([5]), [COL_MIN]); assert.deepEqual(cleanColwidth([99999]), [COL_MAX])
+  for (const bad of [null, undefined, [], 240, '240', {}, [null], [0], [NaN], [-5], ['abc']]) assert.equal(cleanColwidth(bad), null, JSON.stringify(bad))
+})
+
+test('cleanColwidth: 合并单元格里部分列没设宽用 0 占位,保持列数对齐', () => {
+  assert.deepEqual(cleanColwidth([200, null]), [200, 0]); assert.deepEqual(cleanColwidth([0, 150]), [0, 150])
+})
+
+test('手动调过列宽的简单表格:不再走 GFM(GFM 存不下宽度),整张表存成 HTML', () => {
+  const t = table(row(whead([200]), whead([120])), row(wcell([200]), wcell([120])))
+  assert.equal(hasCustomWidths(t), true); assert.equal(isComplexTable(t), true)
+  const md = complexTableMarkdown(t); assert.ok(md.includes('<table>') && md.includes('colwidth="200"') && md.includes('colwidth="120"'), md)
+})
+
+test('没调过列宽的简单表格:仍走 GFM(不无谓转成 HTML)', () => {
+  for (const w of [null, undefined, [], [0]]) {
+    const t = table(row(whead(w), whead(w)), row(wcell(w), wcell(w)))
+    assert.equal(hasCustomWidths(t), false); assert.equal(isComplexTable(t), false); assert.equal(complexTableMarkdown(t), null)
+  }
+})
+
+test('只有一列调过宽:整张表存 HTML,没调的列不输出 colwidth', () => {
+  const t = table(row(whead([180]), whead(null)), row(wcell([180]), wcell(null)))
+  const html = tableToHtml(t)
+  assert.equal((html.match(/colwidth=/g) || []).length, 2)   // 两行各一个,表头与正文的第一列
+  assert.ok(html.includes('<th colwidth="180"><p>h</p></th><th><p>h</p></th>'), html)
+})
+
+test('colwidth 与 colspan、对齐一起输出,属性顺序固定', () => {
+  const c = { type: 'tableHeader', attrs: { colspan: 2, colwidth: [100, 80], align: 'center' }, content: [p('跨列')] }
+  assert.ok(tableToHtml(table(row(c))).includes('<th colspan="2" colwidth="100,80" style="text-align:center">'))
+})
+
+test('列宽数值被规整后输出(越界夹住、小数取整),不会输出非法值', () => {
+  const html = tableToHtml(table(row(whead([3]), whead([99999.4])), row(wcell([3]), wcell([99999.4]))))
+  assert.ok(html.includes(`colwidth="${COL_MIN}"`) && html.includes(`colwidth="${COL_MAX}"`) && !html.includes('NaN') && !html.includes('99999'))
+})
+
+test('既有复杂内容(列表)又有列宽:两者都保留', () => {
+  const t = table(row(whead([150])), row(wcell([150], p('x'), ul(li(p('项'))))))
+  const html = tableToHtml(t); assert.ok(html.includes('colwidth="150"') && html.includes('<ul><li><p>项</p></li></ul>'))
+})
+
+test('draggedColWidth: 缩放 100% 时屏幕位移即列宽增量', () => { assert.equal(draggedColWidth(150, 100, 1), 250); assert.equal(draggedColWidth(150, -50, 1), 100) })
+
+test('draggedColWidth: 画布缩放时按比例换算,手柄始终跟手', () => {
+  assert.equal(draggedColWidth(150, 60, 0.6), 250)        // 缩小到 60%:屏幕上 60px = world 100
+  assert.equal(draggedColWidth(150, 150, 1.5), 250)       // 放大到 150%:屏幕上 150px = world 100
+  assert.equal(draggedColWidth(150, 100, 0.5), 350)
+})
+
+test('draggedColWidth: 夹在 [COL_MIN, COL_MAX],结果取整', () => {
+  assert.equal(draggedColWidth(100, -5000, 1), COL_MIN); assert.equal(draggedColWidth(100, 99999, 1), COL_MAX)
+  assert.equal(draggedColWidth(100, 33.3, 0.7), Math.round(100 + 33.3 / 0.7))
+  assert.ok(Number.isInteger(draggedColWidth(101.5, 10.2, 0.9)))
+})
+
+test('draggedColWidth: 缩放比例非法(0、负、NaN)按 1 处理;起点非法不返回 NaN', () => {
+  for (const k of [0, -1, NaN, undefined, null]) assert.equal(draggedColWidth(150, 100, k), 250, String(k))
+  assert.ok(Number.isFinite(draggedColWidth(NaN, 10, 1))); assert.ok(Number.isFinite(draggedColWidth(100, NaN, 1)))
 })

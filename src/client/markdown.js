@@ -17,6 +17,7 @@ import { complexTableMarkdown } from '../core/tablemd.js'
 import { detectSlash, isImageFile, TABLE_DEFAULT } from '../core/slash.js'
 import { BoardImage, setCurrentBoard } from './boardimage.js'
 import { Callout } from './callout.js'
+import { ColumnWidth } from './tableresize.js'
 import { Highlight, escapeLiteralHighlight } from './highlight.js'
 import { SlashMenu } from './slashmenu.js'
 import { runCommand, insertImages, pickImageFiles } from './slashcmds.js'
@@ -139,6 +140,10 @@ function liftKeepingSiblings(editor, name) {
  * 读取不用额外处理:Markdown 里的 <table> 块会被编辑器的 HTML 规则读回,单元格里的列表原样恢复。
  */
 const RichTable = Table.extend({
+  // 列宽:拖动列边界调整(编辑态)。宽度存在单元格的 colwidth 属性里;
+  // GFM 表格没有地方存宽度,所以一旦有手动列宽,整张表就存成 HTML(见 complexTableMarkdown)。
+  // resizable 关闭:库自带的列宽拖拽不换算画布缩放,由下面的 ColumnWidth 扩展接管(悬停识别沿用库的插件)
+  addOptions() { return { ...this.parent?.(), resizable: false, cellMinWidth: 40, renderWrapper: true } },   // renderWrapper:渲染态(无节点视图)也输出 .tableWrapper,宽表格才有横向滚动容器
   renderMarkdown(node, helpers, ctx) {
     const html = complexTableMarkdown(node)
     if (html !== null) return html
@@ -193,6 +198,7 @@ const extensions = (slash) => [
   Highlight,
   Markdown,
   RichTable, TableRow, TableHeader, TableCell,
+  ColumnWidth,
   TaskList, TaskItem.configure({ nested: true }),
   BoardImage.configure({ inline: false, allowBase64: false }),
   ListKeys,
