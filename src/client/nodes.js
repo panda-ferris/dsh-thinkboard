@@ -54,7 +54,7 @@ export const NodeView = React.memo(function NodeView(props) {
 })
 
 function Body({ n, editing, store, transport, boardId, t, inDetail, count }) {
-  if (n.type === 'text') return h(TextBody, { n, editing, store, t, inDetail })
+  if (n.type === 'text') return h(TextBody, { n, editing, store, t, inDetail, boardId, transport })
   if (n.type === 'image') return h(ImageBody, { n, editing, store, transport, boardId, t })
   if (n.type === 'html') return h(HtmlBody, { n, editing, store, t })
   if (n.type === 'group') return h(GroupBody, { n, editing, count, store, t })
@@ -108,7 +108,7 @@ function TitleBar({ n, store, t, always, onEnter, inputRef, draftRef }) {
   }, value || t('node.titlePlaceholder'))
 }
 
-function TextBody({ n, editing, store, t, inDetail }) {
+function TextBody({ n, editing, store, t, inDetail, boardId, transport }) {
   const titleRef = React.useRef(null)
   const enteredAt = React.useRef(0)
   const titleDraft = React.useRef(n.title || '')
@@ -140,9 +140,9 @@ function TextBody({ n, editing, store, t, inDetail }) {
   return h(React.Fragment, null,
     h(TitleBar, { n, store, t, always: editing, inputRef: titleRef, draftRef: titleDraft, onEnter: () => bodyFocus.current?.() }),
     editing
-      ? h(MarkdownEditor, { initial: n.text || '', placeholder: t('node.textPlaceholder'), onCommit: commit, autofocus: !focusTitleFirst, focusRef: bodyFocus, titleRef })
+      ? h(MarkdownEditor, { initial: n.text || '', placeholder: t('node.textPlaceholder'), onCommit: commit, autofocus: !focusTitleFirst, focusRef: bodyFocus, titleRef, t, boardId, transport })
       : h('div', { ref: bodyRef, className: 'wb-body' + (n.collapsed ? ' is-collapsed' : '') + (overflow ? ' is-overflow' : ''), 'data-wb-scroll': n.collapsed ? undefined : true },
-        n.text ? h(MarkdownView, { text: n.text }) : n.title ? null : h('div', { className: 'wb-placeholder' }, t('node.textPlaceholder'))),
+        n.text ? h(MarkdownView, { text: n.text, boardId }) : n.title ? null : h('div', { className: 'wb-placeholder' }, t('node.textPlaceholder'))),
     // 折叠态 / 内容溢出:底部一条操作栏
     !editing && (n.collapsed || overflow) ? h('div', { className: 'wb-foldbar', 'data-wb-ui': true, onPointerDown: stop },
       h('button', { className: 'wb-foldbtn', onClick: toggle, title: n.collapsed ? t('fold.expand') : t('fold.collapse') }, n.collapsed ? t('fold.expand') : t('fold.collapse')),

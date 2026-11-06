@@ -6,7 +6,7 @@ import { togglePatch } from '../core/content.js'
 
 const h = React.createElement
 
-export function DetailPane({ store, state, t }) {
+export function DetailPane({ store, state, t, transport }) {
   const id = state.detail
   const n = state.board?.nodes.find((x) => x.id === id)
   if (!n) return h('div', { className: 'wb-chat-empty' }, t('detail.empty'))
@@ -33,5 +33,5 @@ export function DetailPane({ store, state, t }) {
       h('button', { className: 'wb-btn', onClick: () => { const p = togglePatch(n); if (p) store.dispatch([{ op: 'updateNode', id: n.id, patch: p }]) } }, n.collapsed ? t('fold.expand') : t('fold.collapse')),
       h('button', { className: 'wb-btn wb-btn-icon', title: t('detail.close'), 'aria-label': t('detail.close'), onClick: () => store.closeDetail() }, '×')),
     // key=卡片 id:切换卡片时重建编辑器,避免把上一张卡片的内容写到新卡片
-    h(LiveMarkdownEditor, { key: n.id, value: n.text || '', placeholder: t('node.textPlaceholder'), onChange: (text) => write({ text }) }))
+    h(LiveMarkdownEditor, { key: n.id, value: n.text || '', placeholder: t('node.textPlaceholder'), onChange: (text) => write({ text }), t, boardId: state.board.id, transport }))
 }

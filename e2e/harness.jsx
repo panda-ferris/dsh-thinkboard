@@ -6,6 +6,7 @@ import { Toolbar, Panel } from '../src/client/panel.js'
 import { DetailPane } from '../src/client/detail.js'
 import { renderPng, resolveBackground } from '../src/client/export.js'
 import { createStore } from '../src/client/store.js'
+import { configureAssetUrls } from '../src/client/boardimage.js'
 import { createFocusBus } from '../src/client/focusbus.js'
 import { chipsForSelection, parseRef } from '../src/client/chatref.js'
 import { createBoard } from '../src/core/model.js'
@@ -26,6 +27,7 @@ const mkPng = (w, h, color) => { const c = document.createElement('canvas'); c.w
 const TALL = mkPng(100, 300, '#d33')
 const WIDE = mkPng(400, 200, '#33d')
 const errors = []
+configureAssetUrls((b, f) => transport.assetUrl(b, f))
 const store = createStore({ transport, onError: (e) => errors.push(String(e.message || e)) })
 const t = (k) => k
 // 主题 token:测试时切换明/暗,最坏情况用一个很浅的 brand 色检验按钮对比度
@@ -46,7 +48,7 @@ function View() {
   window.__tool = tool
   return <div className="wb-shell" style={{ position: 'fixed', inset: 0, paddingTop: 0 }}>
     <div className="wb-main">{state.board && <header className="wb-toolbar"><Toolbar store={store} state={state} transport={transport} t={t} onSearch={() => setSearch(true)} /></header>}<button id="prim" className="wb-btn wb-primary" style={{ position: 'absolute', zIndex: 99, left: 8, bottom: 8 }}>New chat</button><div className="wb-stage">{state.board && <Canvas store={store} state={state} transport={transport} t={t} search={search} setSearch={setSearch} detailId={state.detail} tool={tool} setTool={setTool} />}</div></div>
-    {state.detail ? <aside className="wb-chat" style={{ width: 380 }}><div className="wb-side-body"><DetailPane store={store} state={state} t={t} /></div></aside> : null}
+    {state.detail ? <aside className="wb-chat" style={{ width: 380 }}><div className="wb-side-body"><DetailPane store={store} state={state} t={t} transport={transport} /></div></aside> : null}
   </div>
 }
 // ---- 完整 Panel 模式(?panel=1):用于测试列表、顶栏标题、侧栏等外壳行为 ----

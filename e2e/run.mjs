@@ -12,7 +12,8 @@ await writeFile('e2e/out/index.html', '<!doctype html><meta charset="utf-8"><bod
 const port = 9444
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, '--user-data-dir=/tmp/wb-chrome', '--window-size=1200,800', 'about:blank'], { stdio: 'ignore' })
 let ws, id = 0; const pending = new Map()
-const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })
+// 每条 CDP 命令 20 秒超时:页面卡死时直接报出"哪条命令没返回",而不是让整套测试无声地挂住
+const send = (method, params = {}) => new Promise((r, rej) => { const i = ++id; const to = setTimeout(() => { pending.delete(i); rej(new Error(`CDP 命令超时(20s): ${method} ${JSON.stringify(params).slice(0, 160)}`)) }, 20000); pending.set(i, (x) => { clearTimeout(to); r(x) }); ws.send(JSON.stringify({ id: i, method, params })) })
 const ev = async (expr) => { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails.exception?.description ?? r.result.exceptionDetails)); return r.result?.result?.value }
 const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
 const drag = async (x1, y1, x2, y2, steps = 8, extra = {}) => { await mouse('mousePressed', x1, y1, extra); for (let i = 1; i <= steps; i++) await mouse('mouseMoved', x1 + ((x2 - x1) * i) / steps, y1 + ((y2 - y1) * i) / steps, extra); await mouse('mouseReleased', x2, y2, extra) }
@@ -1642,6 +1643,181 @@ try {
     const after = await ev(`(()=>{const c=document.querySelector('[data-wb-node="tbl3"] .wb-body td');return {nestedOl:c.querySelectorAll('ol ol').length}})()`)
     check('在单元格里按 Tab 缩进列表项:缩进后存盘并渲染出更深一层', after.nestedOl >= 1, JSON.stringify(after))
     check('编辑后存盘仍是 HTML 表格', /<table>/.test(await mdOf('tbl3')))
+  }
+
+  console.log('slash 命令:表格 / 图片 / 常用块')
+  { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
+    const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
+    const menu = () => ev(`(()=>{const m=document.querySelector('.wb-slash');if(!m)return null;return {items:[...m.querySelectorAll('.wb-slash-item')].map(i=>i.dataset.slash),active:m.querySelector('.is-active')?.dataset.slash??null,table:!!m.querySelector('[data-wb-slash-table]')}})()`)
+    const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const openEditor = async (id, text = '') => { await reset([T(id, 100, 100, 480, 360, { title: 'slash', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['${id}']); window.__wb.store.setEditing('${id}')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="${id}"] .ProseMirror');ed.focus();const r=document.createRange();r.selectNodeContents(ed);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    // 等到条件成立(最多 3 秒),比固定睡眠稳:渲染快慢不同的机器上都不会误判
+    const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await sleep(60) } return false }
+
+    // ---- 触发与过滤 ----
+    await openEditor('sl1')
+    await typeText('/'); const m0 = await menu()
+    check('输入 / 弹出菜单,表格与图片排在最前', !!m0 && m0.items[0] === 'table' && m0.items[1] === 'image' && m0.items.length >= 9, JSON.stringify(m0))
+    check('菜单出现在光标附近(在视口内)', await ev(`(()=>{const r=document.querySelector('.wb-slash').getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()`))
+    await typeText('表'); check('输入"表"过滤出表格', JSON.stringify((await menu())?.items) === JSON.stringify(['table']))
+    await key('Backspace', 'Backspace', 8); await sleep(120)
+    check('退格回到全部候选', (await menu()).items.length >= 9)
+    await typeText('zzzz没有'); await sleep(150)
+    check('没有匹配时菜单自动关闭', (await menu()) === null)
+    await leave()
+    // ---- 不该触发的情形 ----
+    await openEditor('sl2'); await typeText('http://example.com/path')
+    check('网址里的 / 不触发菜单', (await menu()) === null)
+    await typeText(' 然后 a/b'); check('单词中间的 / 不触发菜单', (await menu()) === null)
+    await leave()
+    await openEditor('sl3', '```\ncode\n```'); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="sl3"] .ProseMirror');ed.focus();const c=ed.querySelector('code');const r=document.createRange();r.selectNodeContents(c);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    await typeText('/'); check('代码块里的 / 不触发菜单', (await menu()) === null)
+    await leave()
+
+    // ---- 键盘:上下选择、Esc ----
+    await openEditor('sl4'); await typeText('/')
+    await key('ArrowDown', 'ArrowDown', 40); await sleep(80)
+    check('↓ 移动高亮到第二项', (await menu()).active === 'image')
+    await key('ArrowUp', 'ArrowUp', 38); await key('ArrowUp', 'ArrowUp', 38); await sleep(80)
+    check('↑ 从第一项循环到最后一项', (await menu()).active === 'divider', String((await menu()).active))
+    await key('Escape', 'Escape', 27); await sleep(150)
+    check('Esc 关闭菜单,保留已输入的 "/"', (await menu()) === null && (await ev(`document.querySelector('[data-wb-node="sl4"] .ProseMirror').textContent`)) === '/')
+    check('Esc 只关菜单,不退出卡片编辑', (await ev('window.__wb.store.getState().editing')) === 'sl4')
+    await leave()
+
+    // ---- 常用块 ----
+    for (const [q, expect, label] of [['h2', '## ', '二级标题'], ['无序', '- ', '无序列表'], ['有序', '1. ', '有序列表'], ['待办', '- [ ] ', '待办列表'], ['引用', '> ', '引用'], ['分割', '---', '分割线']]) {
+      await openEditor('sl5'); await typeText('/' + q); await key('Enter', 'Enter', 13); await sleep(200)
+      if (q === '分割' || q === 'h2') {} 
+      await typeText(q === '分割' ? '' : '内容'); await leave()
+      const t0 = await textOf('sl5')
+      check(`/${q} → ${label}(存成 Markdown ${expect.trim()})`, t0.includes(expect.trim()) && !t0.includes('/'), JSON.stringify(t0))
+    }
+    await openEditor('sl6'); await typeText('/代码'); await key('Enter', 'Enter', 13); await sleep(200); await typeText('x=1'); await leave()
+    check('/代码 → 代码块', /```/.test(await textOf('sl6')) && (await textOf('sl6')).includes('x=1'), JSON.stringify(await textOf('sl6')))
+    await openEditor('sl7', '前面一段'); await typeText(' /h1'); await key('Enter', 'Enter', 13); await sleep(200); await leave()
+    check('命令执行后 "/查询" 被删除,不留在正文里', !(await textOf('sl7')).includes('/h1'), JSON.stringify(await textOf('sl7')))
+
+    // ---- 表格 ----
+    await openEditor('sl8'); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(200)
+    { const m = await menu(); check('选表格 → 出现尺寸选择(网格 + 输入框)', !!m && m.table && (await ev(`!!document.querySelector('.wb-slash-sizeinput')`))) }
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('4x3'); await sleep(100)
+    check('输入 4x3 时预览显示 4 行 × 3 列', (await ev(`document.querySelector('.wb-slash-sizelabel').textContent`)) === 'slash.tableSize')
+    check('网格高亮 4×3 共 12 格', (await ev(`document.querySelectorAll('.wb-slash-cell.is-on').length`)) === 12)
+    await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="sl8"] .ProseMirror table')`)
+    { const d = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl8"] .ProseMirror table');return t?{rows:t.querySelectorAll('tr').length,cols:t.querySelector('tr').children.length,th:t.querySelectorAll('th').length}:null})()`)
+      check('插入 4 行 3 列、首行是表头的表格', !!d && d.rows === 4 && d.cols === 3 && d.th === 3, JSON.stringify(d)) }
+    check('插入后菜单关闭,"/table" 被删除', (await menu()) === null && !(await ev(`document.querySelector('[data-wb-node="sl8"] .ProseMirror').textContent`)).includes('/table'))
+    check('光标落在表格第一个单元格里(可直接输入)', await ev(`(()=>{const c=document.querySelector('[data-wb-node="sl8"] .ProseMirror th');const s=getSelection();return !!s.anchorNode&&c.contains(s.anchorNode)})()`))
+    await typeText('姓名'); await key('Tab', 'Tab', 9); await typeText('年龄'); await key('Tab', 'Tab', 9); await typeText('城市')
+    for (let i = 0; i < 3; i++) { await key('Tab', 'Tab', 9); await typeText('r' + i) }
+    await leave()
+    { const md = await textOf('sl8')
+      check('填完后存成标准 GFM 表格(表头 + 分隔行)', /\|\s*姓名\s*\|\s*年龄\s*\|\s*城市\s*\|/.test(md) && /\|\s*-{3,}\s*\|/.test(md), md)
+      check('Tab 在单元格间移动:内容进了正确的格子', /\|\s*r0\s*\|\s*r1\s*\|\s*r2\s*\|/.test(md), md)
+      const v = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl8"] .wb-body table');return t?{rows:t.querySelectorAll('tr').length,th:t.querySelectorAll('th').length}:null})()`)
+      check('离开编辑后渲染态:同样是 4 行表格', !!v && v.rows === 4 && v.th === 3, JSON.stringify(v)) }
+    // 鼠标点网格
+    await openEditor('sl9'); await typeText('/表格'); await key('Enter', 'Enter', 13); await sleep(200)
+    { const c = await ev(`(()=>{const e=document.querySelector('.wb-slash-cell[aria-label="2×4"]').getBoundingClientRect();return {x:e.left+e.width/2,y:e.top+e.height/2}})()`)
+      await mouse('mouseMoved', c.x, c.y); await sleep(80)
+      await mouse('mousePressed', c.x, c.y); await mouse('mouseReleased', c.x, c.y); await sleep(400) }
+    { const d = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl9"] .ProseMirror table');return t?{rows:t.querySelectorAll('tr').length,cols:t.querySelector('tr').children.length}:null})()`)
+      check('鼠标点网格 2×4:插入 2 行 4 列', !!d && d.rows === 2 && d.cols === 4, JSON.stringify(d)) }
+    await leave()
+    // 超范围尺寸被夹住;非法输入不插入
+    await openEditor('sl10'); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(200)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('99x99'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="sl10"] .ProseMirror table')`)
+    { const d = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl10"] .ProseMirror table');return t?{rows:t.querySelectorAll('tr').length,cols:t.querySelector('tr').children.length}:null})()`)
+      check('尺寸过大被夹到上限(20 行 × 10 列)', !!d && d.rows === 20 && d.cols === 10, JSON.stringify(d)) }
+    await leave()
+    await openEditor('sl11'); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(200)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('乱写'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="sl11"] .ProseMirror table')`)
+    { const d = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl11"] .ProseMirror table');return t?{rows:t.querySelectorAll('tr').length,cols:t.querySelector('tr').children.length}:null})()`)
+      check('输入框写了无法识别的尺寸:按当前网格高亮(默认 3×3)插入', !!d && d.rows === 3 && d.cols === 3, JSON.stringify(d)) }
+    await leave()
+    await openEditor('sl12'); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(200)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await key('Escape', 'Escape', 27); await sleep(150)
+    check('尺寸选择里按 Esc:回到命令列表,不插入表格', (await menu()) && !(await menu()).table && !(await ev(`!!document.querySelector('[data-wb-node="sl12"] .ProseMirror table')`)))
+    await leave()
+    // 在表格单元格里继续用 slash(单元格里的段落可以触发)
+    await openEditor('sl13'); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(200)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('2x2'); await key('Enter', 'Enter', 13); await sleep(300)
+    await typeText('/无序'); await key('Enter', 'Enter', 13); await sleep(200); await typeText('列表项')
+    { const d = await ev(`(()=>{const c=document.querySelector('[data-wb-node="sl13"] .ProseMirror th');return {ul:c.querySelectorAll('ul').length}})()`)
+      check('在表格单元格里用 /无序 可以插入列表', d.ul === 1, JSON.stringify(d)) }
+    await leave()
+    check('单元格里有列表的表格存成 HTML(不丢列表)', /<table>/.test(await textOf('sl13')) && /<ul>/.test(await textOf('sl13')))
+  }
+
+  console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
+  { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
+    const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
+    const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const openEditor = async (id, text = '') => { await reset([T(id, 100, 100, 480, 360, { title: 'img', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['${id}']); window.__wb.store.setEditing('${id}')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="${id}"] .ProseMirror');ed.focus();const r=document.createRange();r.selectNodeContents(ed);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    // 把文件塞进 slash 触发的文件选择器(测试里拦截 input[type=file]:取消默认弹窗,直接给它文件)
+    const pickWith = (name) => ev(`(async()=>{for(let i=0;i<40;i++){const inp=document.querySelector('input[data-wb-slash-file]');if(inp){const dt=new DataTransfer();dt.items.add(new File([new Uint8Array([137,80,78,71,13,10,26,10])],${JSON.stringify(name)},{type:'image/png'}));inp.files=dt.files;inp.dispatchEvent(new Event('change'));return true}await new Promise(r=>setTimeout(r,50))}return false})()`)
+    await ev(`HTMLInputElement.prototype.click = (function(orig){return function(){ if (this.hasAttribute('data-wb-slash-file')) return; return orig.call(this) }})(HTMLInputElement.prototype.click)`)
+
+    // 1) /图片 → 选文件 → 插入
+    await openEditor('im1', '前文'); await typeText(' /图片'); await key('Enter', 'Enter', 13); await sleep(250)
+    const picked = await pickWith('wide.png'); await sleep(700)
+    check('/图片 会请求文件选择器', picked === true)
+    { const d = await ev(`(()=>{const i=document.querySelector('[data-wb-node="im1"] .ProseMirror img');return i?{src:i.getAttribute('src'),alt:i.getAttribute('alt')}:null})()`)
+      check('文件上传后,图片插入到编辑器里并显示真实资源 URL', !!d && d.src.startsWith('data:image/png') , JSON.stringify(d)) }
+    check('"/图片" 文字已删除,前文保留', await ev(`(()=>{const t=document.querySelector('[data-wb-node="im1"] .ProseMirror').textContent;return t.includes('前文')&&!t.includes('/图片')})()`))
+    await leave()
+    { const md = await textOf('im1')
+      check('存盘用相对路径 assets/…(不是带登录信息的真实 URL)', /!\[wide\]\(assets\/wide\.png\)/.test(md) && !/data:|http|api\//.test(md), md)
+      const v = await ev(`(()=>{const i=document.querySelector('[data-wb-node="im1"] .wb-body img');return i?i.getAttribute('src'):null})()`)
+      check('渲染态:相对路径被映射成真实资源 URL 显示出来', !!v && v.startsWith('data:image/png'), String(v).slice(0, 40))
+      check('渲染态的图片没有超出卡片宽度', await ev(`(()=>{const i=document.querySelector('[data-wb-node="im1"] .wb-body img');const b=document.querySelector('[data-wb-node="im1"]').getBoundingClientRect();return i.getBoundingClientRect().right<=b.right+1})()`)) }
+    // 2) 往返稳定:再进入再离开,内容不变
+    { const before = await textOf('im1')
+      await ev(`window.__wb.store.select(['im1']); window.__wb.store.setEditing('im1')`); await sleep(500); await leave()
+      check('再次进入并离开编辑:图片引用不变(幂等,不会被写成 URL)', (await textOf('im1')) === before) }
+    // 3) 存盘里已有 assets/ 引用 → 渲染
+    await reset([T('im2', 100, 100, 480, 300, { text: '图:\n\n![架构图](assets/wide.png)\n\n![远程](https://example.com/a.png)' })]); await sleep(400)
+    { const imgs = await ev(`[...document.querySelectorAll('[data-wb-node="im2"] .wb-body img')].map(i=>i.getAttribute('src'))`)
+      check('Markdown 里的 assets/ 图片映射成真实 URL', imgs.length === 2 && imgs[0].startsWith('data:image/png'), JSON.stringify(imgs.map((x) => x.slice(0, 30))))
+      check('远程图片 URL 原样保留,不被改写', imgs[1] === 'https://example.com/a.png') }
+    await ev(`window.__wb.store.select(['im2']); window.__wb.store.setEditing('im2')`); await sleep(500); await leave()
+    { const md = await textOf('im2')
+      check('含 assets/ 与远程图片的卡片未做修改就退出:两种引用都原样存回', md.includes('![架构图](assets/wide.png)') && md.includes('![远程](https://example.com/a.png)'), md) }
+    // 4) 非法路径不被映射(安全)
+    await reset([T('im3', 100, 100, 480, 300, { text: '![x](assets/../secret.png)\n\n![y](assets/a/b.png)' })]); await sleep(400)
+    { const imgs = await ev(`[...document.querySelectorAll('[data-wb-node="im3"] .wb-body img')].map(i=>i.getAttribute('src'))`)
+      check('含 .. 或多级的 assets 路径不被映射成资源 URL', imgs.every((s) => !s.startsWith('data:')), JSON.stringify(imgs)) }
+    // 5) 粘贴图片文件
+    await openEditor('im4'); 
+    await ev(`(()=>{const ed=document.querySelector('[data-wb-node="im4"] .ProseMirror');const dt=new DataTransfer();dt.items.add(new File([new Uint8Array([137,80,78,71])],'wide.png',{type:'image/png'}));ed.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}))})()`); await sleep(700)
+    check('粘贴图片文件:直接上传并插入', (await ev(`document.querySelectorAll('[data-wb-node="im4"] .ProseMirror img').length`)) === 1)
+    await leave(); check('粘贴的图片存成 assets/ 引用', /\(assets\/[^)]+\)/.test(await textOf('im4')), await textOf('im4'))
+    // 6) 拖入图片文件
+    await openEditor('im5')
+    await ev(`(()=>{const ed=document.querySelector('[data-wb-node="im5"] .ProseMirror');const dt=new DataTransfer();dt.items.add(new File([new Uint8Array([137,80,78,71])],'x.png',{type:'image/png'}));const r=ed.getBoundingClientRect();ed.dispatchEvent(new DragEvent('drop',{dataTransfer:dt,bubbles:true,cancelable:true,clientX:r.left+20,clientY:r.top+10}))})()`); await sleep(700)
+    check('拖入图片文件:直接上传并插入', (await ev(`document.querySelectorAll('[data-wb-node="im5"] .ProseMirror img').length`)) === 1)
+    await leave()
+    // 7) 粘贴非图片文件不拦截(交给默认的文本粘贴)
+    await openEditor('im6')
+    await ev(`(()=>{const ed=document.querySelector('[data-wb-node="im6"] .ProseMirror');const dt=new DataTransfer();dt.items.add(new File(['x'],'a.pdf',{type:'application/pdf'}));dt.setData('text/plain','纯文字');ed.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}))})()`); await sleep(400)
+    check('粘贴的是非图片文件:不当作图片处理', (await ev(`document.querySelectorAll('[data-wb-node="im6"] .ProseMirror img').length`)) === 0)
+    await leave()
+    // 8) 同一段文字在不同白板里图片 URL 不同:缓存不能串
+    await reset([T('im7', 100, 100, 480, 200, { text: '![a](assets/wide.png)' })]); await sleep(300)
+    { const u1 = await ev(`document.querySelector('[data-wb-node="im7"] .wb-body img').getAttribute('src')`)
+      check('渲染缓存按白板区分(同样的 Markdown 不会拿到别的白板的 URL)', !!u1) }
+    // 9) 详情面板里同样可用
+    await reset([T('im8', 100, 100, 320, 200, { title: '详情图', text: '' })]); await sleep(250)
+    await ev(`window.__wb.store.select(['im8']); window.__wb.store.openDetail('im8')`); await sleep(500)
+    await ev(`(()=>{const ed=document.querySelector('.wb-detail .ProseMirror');ed.focus();const r=document.createRange();r.selectNodeContents(ed);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    await typeText('/'); await sleep(150)
+    check('详情面板里同样可以用 / 菜单', await ev(`!!document.querySelector('.wb-slash')`))
+    await key('Escape', 'Escape', 27); await sleep(100)
+    await ev(`(()=>{const ed=document.querySelector('.wb-detail .ProseMirror');const dt=new DataTransfer();dt.items.add(new File([new Uint8Array([137,80,78,71])],'wide.png',{type:'image/png'}));ed.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}))})()`); await sleep(1200)
+    check('详情面板里粘贴图片:写回卡片并存成 assets/ 引用', /\(assets\/[^)]+\)/.test(await textOf('im8')), await textOf('im8'))
   }
   const shot = await send('Page.captureScreenshot', { format: 'png' })
   await writeFile('e2e/out/shot.png', Buffer.from(shot.result.data, 'base64'))

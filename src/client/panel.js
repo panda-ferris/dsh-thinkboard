@@ -251,7 +251,7 @@ function fit(store, state) {
 
 // ---- 右侧:对话 / 详情 ----
 function SidePane(props) {
-  const { chat, setChat, setSide, state, store, t } = props
+  const { chat, setChat, setSide, state, store, t, transport } = props
   const dragging = React.useRef(null)
   const onResizeDown = (e) => { dragging.current = { x: e.clientX, w: chat.width }; e.currentTarget.setPointerCapture(e.pointerId) }
   const onResizeMove = (e) => { if (!dragging.current) return; setChat({ ...chat, width: Math.max(300, Math.min(900, dragging.current.w - (e.clientX - dragging.current.x))) }) }
@@ -264,7 +264,7 @@ function SidePane(props) {
       state.detail ? h('button', { role: 'tab', 'aria-selected': tab === 'detail', className: 'wb-side-tab' + (tab === 'detail' ? ' is-on' : ''), onClick: () => setSide({ tab: 'detail' }) }, t('detail.tab')) : null),
     // 对话始终挂载(切到详情时只是隐藏),避免会话重建与滚动位置丢失
     h('div', { className: 'wb-side-body', hidden: tab !== 'chat' }, h(ChatPane, props)),
-    tab === 'detail' ? h('div', { className: 'wb-side-body' }, h(DetailPane, { store, state, t })) : null)
+    tab === 'detail' ? h('div', { className: 'wb-side-body' }, h(DetailPane, { store, state, t, transport })) : null)
 }
 
 function ChatPane({ boardId, chat, setChat, state, t, ctx, renderSlot, SessionProvider, useSessions }) {

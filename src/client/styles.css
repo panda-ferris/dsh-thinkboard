@@ -125,8 +125,6 @@
 .wb-md code{background:var(--dsw-alias-bg-layer-2);border-radius:4px;padding:0 4px;font-size:.92em}
 .wb-md pre{background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:8px 10px;overflow:auto}
 .wb-md pre code{background:none;padding:0}
-.wb-md table{border-collapse:collapse;margin:.5em 0}
-.wb-md th,.wb-md td{border:1px solid var(--wb-line);padding:3px 8px}
 .wb-md img{max-width:100%}
 .wb-md a{color:var(--wb-accent)}
 .wb-md hr{border:none;border-top:1px solid var(--wb-line)}
@@ -345,3 +343,32 @@
 .wb-chat-note{margin-left:8px;font-size:12px;color:var(--dsw-alias-label-secondary)}
 .wb-toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);z-index:40;padding:6px 14px;border-radius:16px;font-size:12px;
   background:var(--dsw-alias-bg-overlay);border:1px solid var(--wb-line);box-shadow:0 4px 16px rgba(0,0,0,.2);pointer-events:none}
+
+/* ---------- slash 菜单 ---------- */
+.wb-slash{position:fixed;z-index:60;min-width:260px;max-width:340px;max-height:320px;overflow:hidden;display:flex;flex-direction:column;padding:6px;
+  background:var(--dsw-alias-bg-overlay);border:1px solid var(--wb-line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.28)}
+.wb-slash-list{overflow-y:auto;display:flex;flex-direction:column;gap:1px}
+.wb-slash-item{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:7px;cursor:pointer;color:var(--dsw-alias-label-primary)}
+.wb-slash-item.is-active{background:var(--dsw-alias-bg-layer-2)}
+.wb-slash-icon{flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:1px solid var(--wb-line);border-radius:6px;color:var(--dsw-alias-label-secondary)}
+.wb-slash-glyph{font:600 11px/1 system-ui,sans-serif}
+.wb-slash-name{font-size:13px}
+.wb-slash-desc{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.wb-slash-table{padding:6px}
+.wb-slash-grid{display:grid;gap:3px}
+.wb-slash-cell{width:18px;height:18px;padding:0;border:1px solid var(--wb-line);border-radius:3px;background:transparent;cursor:pointer}
+.wb-slash-cell.is-on{background:var(--wb-accent);border-color:var(--wb-accent)}
+.wb-slash-sizebar{display:flex;align-items:center;gap:8px;margin-top:8px}
+.wb-slash-sizeinput{flex:1;min-width:0;font:inherit;font-size:12px;color:inherit;background:var(--dsw-alias-bg-base);border:1px solid var(--wb-line);border-radius:6px;padding:4px 8px;outline:none}
+.wb-slash-sizeinput:focus{border-color:var(--wb-accent)}
+.wb-slash-sizelabel{font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+
+/* ---------- 表格(编辑与渲染) ---------- */
+.wb-md table{border-collapse:collapse;margin:.5em 0;width:100%;table-layout:fixed}
+.wb-md th,.wb-md td{border:1px solid var(--wb-line);padding:4px 8px;vertical-align:top;min-width:40px;position:relative;word-break:break-word}
+.wb-md th{background:var(--dsw-alias-bg-layer-2);font-weight:600;text-align:left}
+.wb-md td>p,.wb-md th>p{margin:0}
+.wb-md td>ul,.wb-md td>ol,.wb-md th>ul,.wb-md th>ol{margin:.15em 0;padding-left:1.3em}
+.wb-md .selectedCell:after{content:'';position:absolute;inset:0;background:color-mix(in srgb,var(--wb-accent) 18%,transparent);pointer-events:none}
+.wb-md img{max-width:100%;height:auto;border-radius:4px}
+.wb-md img.ProseMirror-selectednode{outline:2px solid var(--wb-accent)}

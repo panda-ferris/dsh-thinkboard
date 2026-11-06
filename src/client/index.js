@@ -7,6 +7,7 @@ import { createStore } from './store.js'
 import { createReferenceSource } from './refsource.js'
 import { presentKeys } from './chatref.js'
 import { createFocusBus } from './focusbus.js'
+import { configureAssetUrls } from './boardimage.js'
 import { transport } from './transport.js'
 import css from './styles.css'
 
@@ -49,6 +50,7 @@ export function apply(ctx) {
   }), 'thinkboard: locale')
 
   const focusBus = createFocusBus()
+  configureAssetUrls((boardId, file) => transport.assetUrl(boardId, file))
 
   // ---- 输入框里的"白板元素引用":点击聚焦、发送时转成模型可读的文本 ----
   // 外观借用 dsh 的"会话"图标(dsh 只允许 session / file / folder 三种)。
@@ -82,6 +84,11 @@ export function apply(ctx) {
 }
 
 const ZH = {
+  'slash.title': '插入', 'slash.sizeHint': '行×列,如 4x3', 'slash.tableSize': '{rows} 行 × {cols} 列',
+  'slash.table': '表格', 'slash.table.desc': '选择行列数', 'slash.image': '图片', 'slash.image.desc': '上传并插入',
+  'slash.h1': '一级标题', 'slash.h1.desc': '大标题', 'slash.h2': '二级标题', 'slash.h2.desc': '中标题', 'slash.h3': '三级标题', 'slash.h3.desc': '小标题',
+  'slash.bullet': '无序列表', 'slash.bullet.desc': '• 项目符号', 'slash.ordered': '有序列表', 'slash.ordered.desc': '1. 2. 3.', 'slash.task': '待办列表', 'slash.task.desc': '可勾选',
+  'slash.quote': '引用', 'slash.quote.desc': '引用块', 'slash.code': '代码块', 'slash.code.desc': '等宽代码', 'slash.divider': '分割线', 'slash.divider.desc': '水平线',
   'chatref.section': '白板元素', 'chatref.attached': '已把 {count} 个元素加入输入框', 'chatref.blocked': '输入框正在发送,稍后再试', 'chatref.duplicate': '这些元素已经在输入框里了', 'chatref.attachedSkipped': '已加入 {count} 个,另有 {skipped} 个已在输入框中', 'chatref.focusMissing': '这个元素已不在白板上',
   'tool.panel': '工具栏', 'tool.zoom': '缩放比例',
   'title.edit': '白板标题', 'title.hint': '双击修改标题', 'minimap.open': '展开小地图', 'minimap.close': '收起小地图',
@@ -120,6 +127,11 @@ const ZH = {
   'chat.contextHeader': '白板「{board}」(id: {id})中我选中的元素:',
 }
 const EN = {
+  'slash.title': 'Insert', 'slash.sizeHint': 'rows×cols, e.g. 4x3', 'slash.tableSize': '{rows} rows × {cols} cols',
+  'slash.table': 'Table', 'slash.table.desc': 'Pick rows and columns', 'slash.image': 'Image', 'slash.image.desc': 'Upload and insert',
+  'slash.h1': 'Heading 1', 'slash.h1.desc': 'Large', 'slash.h2': 'Heading 2', 'slash.h2.desc': 'Medium', 'slash.h3': 'Heading 3', 'slash.h3.desc': 'Small',
+  'slash.bullet': 'Bulleted list', 'slash.bullet.desc': '• Bullets', 'slash.ordered': 'Numbered list', 'slash.ordered.desc': '1. 2. 3.', 'slash.task': 'To-do list', 'slash.task.desc': 'Checkboxes',
+  'slash.quote': 'Quote', 'slash.quote.desc': 'Block quote', 'slash.code': 'Code block', 'slash.code.desc': 'Monospace', 'slash.divider': 'Divider', 'slash.divider.desc': 'Horizontal rule',
   'chatref.section': 'Board elements', 'chatref.attached': 'Added {count} item(s) to the input', 'chatref.blocked': 'The input is busy sending; try again in a moment', 'chatref.duplicate': 'Those items are already in the input', 'chatref.attachedSkipped': 'Added {count}; {skipped} already in the input', 'chatref.focusMissing': 'This element is no longer on the board',
   'tool.panel': 'Toolbar', 'tool.zoom': 'Zoom level',
   'title.edit': 'Board title', 'title.hint': 'Double-click to rename', 'minimap.open': 'Show minimap', 'minimap.close': 'Hide minimap',
