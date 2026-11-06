@@ -13,6 +13,8 @@
 
 import Blockquote from '@tiptap/extension-blockquote'
 import { mergeAttributes } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { GapCursor } from '@tiptap/pm/gapcursor'
 import { parseCalloutHead, formatCalloutHead, splitFirstLine, canonicalType, defaultTitle, isValidType } from '../core/callout.js'
 
 const attr = (name, def) => ({
@@ -23,6 +25,9 @@ const attr = (name, def) => ({
 
 export const Callout = Blockquote.extend({
   name: 'blockquote',   // 沿用 blockquote 的名字:普通引用和 callout 是同一个节点类型
+
+  // 间隙光标说明见下方 addProseMirrorPlugins:不依赖 createGapCursor(它会让高亮块"内部"的边界也变成合法的
+  // 间隙位置,光标会掉进高亮块里一个看不见的槽位),而是由我们自己把间隙光标放到高亮块的"外侧"。
 
   addAttributes() {
     return {
@@ -190,6 +195,94 @@ export const Callout = Blockquote.extend({
     // 第一块是表格/列表/代码块等时空一行,否则别的 Markdown 解析器会把它们并进标题那一行,表格就不渲染了
     const firstIsPara = blocks[0].type === 'paragraph'
     return `${head}${firstIsPara ? '\n' : `\n${prefix}\n`}${body.join(`\n${prefix}\n`)}`
+  },
+
+  // ---------- 外侧间隙光标 ----------
+  // 问题:createGapCursor 让高亮块能出现间隙光标,但 ProseMirror 会把它放进高亮块"内部"的第一个/最后一个位置
+  // (高亮块内含文字块,内部边界同样满足"闭合"),结果按 ↑ 只是进入高亮块里一个看不见的槽位,
+  // 输入的字也落进高亮块的正文开头,根本没有离开高亮块。
+  // 做法:拦截 ↑ ← ↓ →,当光标在高亮块第一个/最后一个文字块的边缘时,直接把间隙光标放到高亮块的"外侧"
+  // (文档里高亮块前一个位置 / 后一个位置),并且只在那里确实没有可放光标的普通文字块时才这么做。
+  addProseMirrorPlugins() {
+    // 返回应放置间隙光标的文档位置;不该拦截时返回 null
+    const outside = (state, dir) => {
+      const { selection } = state
+      if (!selection.empty) return null
+      const { $from } = selection
+      // 最外层的高亮块祖先
+      let cd = -1
+      for (let d = 1; d < $from.depth; d++) {
+        const n = $from.node(d)
+        if (n.type.name === 'blockquote' && isValidType(n.attrs.calloutType)) { cd = d; break }
+      }
+      if (cd < 0) return null
+      const callout = $from.node(cd)
+      const parent = $from.node(cd - 1)
+      const idx = $from.index(cd - 1)
+      // 光标必须在高亮块"直接子文字块"里(更深的列表/嵌套结构不拦截),并且是它的第一个/最后一个子块的边缘
+      if ($from.depth !== cd + 1) return null
+      if (dir < 0) {
+        if ($from.parentOffset !== 0 || $from.index(cd) !== 0) return null
+        const before = idx > 0 ? parent.child(idx - 1) : null
+        if (before && before.isTextblock) return null                      // 前面有普通文字块:默认移动即可
+        if (before && before.type.name === 'blockquote' && !isValidType(before.attrs.calloutType)) return null
+        return $from.before(cd)
+      }
+      if ($from.parentOffset !== $from.parent.content.size || $from.index(cd) !== callout.childCount - 1) return null
+      const after = idx < parent.childCount - 1 ? parent.child(idx + 1) : null
+      if (!after || after.isTextblock) return null                          // 后面是普通文字块或文档末尾:默认移动即可
+      if (after.type.name === 'blockquote' && !isValidType(after.attrs.calloutType)) return null
+      return $from.after(cd)
+    }
+    const move = (dir) => (view) => {
+      const pos = outside(view.state, dir)
+      if (pos == null) return false
+      const $pos = view.state.doc.resolve(pos)
+      view.dispatch(view.state.tr.setSelection(new GapCursor($pos)).scrollIntoView())
+      return true
+    }
+    const up = move(-1), down = move(+1)
+    return [new Plugin({
+      key: new PluginKey('wbCalloutOutside'),
+      props: {
+        handleKeyDown(view, e) {
+          if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return false
+          if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { if (!view.endOfTextblock(e.key === 'ArrowUp' ? 'up' : 'left')) return false; return up(view) }
+          if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { if (!view.endOfTextblock(e.key === 'ArrowDown' ? 'down' : 'right')) return false; return down(view) }
+          return false
+        },
+      },
+    })]
+  },
+
+  // ---------- 键盘 ----------
+  // 退格(只改高亮块,普通引用沿用 Tiptap 默认行为):
+  //   - 光标在高亮块"非首块"的行首:默认行为是把这一块整个提出引用块(光标跳到块外),
+  //     对"最后一行删到行首"来说太突然。改为交给编辑器默认的"和前一块合并"。
+  //   - 光标在"唯一的、空的"第一块里:高亮块变回普通段落(显式的离开手势,内容不丢)。
+  //   - 光标在非空的第一块行首:什么都不做——不能在正文开头把整个高亮块拆掉。
+  addKeyboardShortcuts() {
+    const parentShortcuts = this.parent?.() ?? {}
+    return {
+      ...parentShortcuts,
+      Backspace: ({ editor }) => {
+        const { selection } = editor.state
+        if (!selection.empty) return false
+        const { $from } = selection
+        if ($from.parentOffset !== 0) return false
+        // 找到最近的、是 callout 的祖先
+        let depth = -1
+        for (let d = $from.depth - 1; d >= 0; d--) { const n = $from.node(d); if (n.type.name === 'blockquote' && isValidType(n.attrs.calloutType)) { depth = d; break } }
+        if (depth < 0) return parentShortcuts.Backspace?.({ editor }) ?? false     // 普通引用 / 不在引用里:沿用默认
+        const index = $from.index(depth)
+        if ($from.depth !== depth + 1) return false          // 在更深的结构(列表、嵌套引用)里:交给它们自己处理
+        if (index > 0) return editor.commands.joinBackward()   // 非首块:和前一块合并,留在高亮块里
+        const callout = $from.node(depth)
+        const onlyEmpty = callout.childCount === 1 && callout.firstChild.type.name === 'paragraph' && callout.firstChild.content.size === 0
+        if (onlyEmpty) return editor.commands.unsetCallout() && editor.commands.lift('blockquote')   // 变回普通段落
+        return true                                            // 吞掉:不拆高亮块
+      },
+    }
   },
 
   addCommands() {

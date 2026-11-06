@@ -1952,6 +1952,94 @@ try {
     { const md = await textOf('t1'); const v = await ev(`!!document.querySelector('[data-wb-node="t1"] .wb-body td .wb-callout, [data-wb-node="t1"] .wb-body th .wb-callout')`)
       check('表格单元格里的高亮块:存盘不丢,渲染仍是高亮块', /单元格里的提示/.test(md) && v, JSON.stringify(md).slice(0, 200)) }
   }
+  console.log('高亮块的光标行为:退格不跳出、前后/之间可以加普通行')
+  { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
+    // 真实按键输入一个字符(insertText 绕过 ProseMirror 对间隙光标的输入处理,不能代表用户)
+    const press = async (ch) => { const up = ch.toUpperCase(); await send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0), text: ch }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0) }); await sleep(60) }
+    const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const shape = () => ev(`(()=>{const pm=document.querySelector('[data-wb-node="s"] .ProseMirror');if(!pm)return null;const d=(n)=>n.classList.contains('wb-callout')?'CALLOUT['+[...n.querySelector('.wb-callout-body').children].map(d).join(',')+']':n.tagName.toLowerCase()+(n.textContent?'"'+n.textContent.slice(0,8)+'"':'∅');return [...pm.children].filter(c=>!c.classList.contains('ProseMirror-gapcursor')).map(d).join(' | ')})()`)
+    const selKind = () => ev(`document.querySelector('[data-wb-node="s"] .ProseMirror')?.editor?.state.selection.constructor.name.replace('_','')`)
+    const open = async (text, caret) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();${caret}})()`) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    const startOf = (n) => `const p=[...document.querySelectorAll('[data-wb-node="s"] .wb-callout-body p')][${n}];const r=document.createRange();r.setStart(p.firstChild||p,0);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)`
+    const endOf = (n) => `const p=[...document.querySelectorAll('[data-wb-node="s"] .wb-callout-body p')][${n}];const r=document.createRange();r.selectNodeContents(p);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)`
+
+    // ---- 退格 ----
+    await open('> [!note] T\n> 一\n>\n> 二', endOf(1))
+    await key('Backspace', 'Backspace', 8); await sleep(120)
+    check('删掉最后一行的字,光标仍在高亮块内', (await shape()) === 'CALLOUT[p"一",p∅] | p∅' && (await selKind()) === 'TextSelection', await shape())
+    await key('Backspace', 'Backspace', 8); await sleep(120)
+    check('在空的最后一行行首退格:合并回上一行,仍在高亮块内(不跳到块外)', (await shape()) === 'CALLOUT[p"一"] | p∅', await shape())
+    // 继续退格:删掉"一" → 高亮块变成只含一个空段落,但仍是高亮块
+    await key('Backspace', 'Backspace', 8); await sleep(120)
+    check('再退格删掉"一":高亮块仍在,里面是一个空段落', (await shape()) === 'CALLOUT[p∅] | p∅', await shape())
+    await press('x')
+    check('此时输入的字落在高亮块里', (await shape()) === 'CALLOUT[p"x"] | p∅', await shape())
+    await leave()
+    await open('> [!note] T\n> 一\n>\n> 二', startOf(1)); await key('Backspace', 'Backspace', 8); await sleep(120)
+    check('第二段行首退格:与上一段合并,留在高亮块内', (await shape()) === 'CALLOUT[p"一二"] | p∅', await shape())
+    await leave()
+    await open('> [!note] T\n> 内容', startOf(0)); await key('Backspace', 'Backspace', 8); await sleep(120)
+    check('首块非空时在行首退格:不拆掉高亮块(什么都不发生)', (await shape()) === 'CALLOUT[p"内容"] | p∅', await shape())
+    await leave()
+    await open('> [!note] T\n> 内容', startOf(0)); await key('Delete', 'Delete', 46); await key('Delete', 'Delete', 46); await sleep(100)
+    await ev(`(()=>{const p=document.querySelector('[data-wb-node="s"] .wb-callout-body p');const r=document.createRange();r.selectNodeContents(p);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    check('清空后高亮块里只剩一个空段落', (await shape()) === 'CALLOUT[p∅] | p∅', await shape())
+    await key('Backspace', 'Backspace', 8); await sleep(150)
+    check('唯一的空段落里退格:高亮块变回普通段落(这是离开高亮块的显式手势)', (await shape()) === 'p∅ | p∅' && !(await ev(`!!document.querySelector('[data-wb-node="s"] .wb-callout')`)), await shape())
+    await leave()
+    // 普通引用的退格行为不受影响
+    await open('> 引用一\n>\n> 引用二', `const p=[...document.querySelectorAll('[data-wb-node="s"] blockquote p')][1];const r=document.createRange();r.setStart(p.firstChild,0);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)`)
+    await key('Backspace', 'Backspace', 8); await sleep(150)
+    check('普通引用的退格沿用默认行为(第二段被提出引用,成为引用之后的普通段落)', (await shape()) === 'blockquote"引用一" | p"引用二" | p∅', await shape())
+    await leave()
+
+    // ---- 在高亮块之前 / 之间加普通行 ----
+    for (const [name, keyName, vk] of [['↑', 'ArrowUp', 38], ['←', 'ArrowLeft', 37]]) {
+      await open('> [!note] T\n> 内容', startOf(0)); await key(keyName, keyName, vk); await sleep(150)
+      check(`文档以高亮块开头:在正文开头按 ${name},光标出现在高亮块之前(间隙光标)`, (await selKind()) === 'GapCursor', await selKind())
+      await press('q'); await press('w')
+      check(`  …输入的字成为高亮块之前的普通行`, (await shape()) === 'p"qw" | CALLOUT[p"内容"] | p∅', await shape())
+      await leave()
+      check(`  …存盘:普通行在前、高亮块在后`, (await textOf('s')) === 'qw\n\n> [!note] T\n> 内容', JSON.stringify(await textOf('s')))
+    }
+    await open('> [!note] T\n> 内容', startOf(0)); await key('ArrowUp', 'ArrowUp', 38); await key('Enter', 'Enter', 13); await sleep(150)
+    check('在文档开头的间隙光标处按回车:在高亮块之前新增一个空行', (await shape()) === 'p∅ | CALLOUT[p"内容"] | p∅', await shape())
+    await leave()
+    for (const [name, keyName, vk, caret] of [['第一个末尾按 ↓', 'ArrowDown', 40, endOf(0)], ['第一个末尾按 →', 'ArrowRight', 39, endOf(0)], ['第二个开头按 ↑', 'ArrowUp', 38, startOf(1)], ['第二个开头按 ←', 'ArrowLeft', 37, startOf(1)]]) {
+      await open('> [!note] A\n> a\n\n> [!tip] B\n> b', caret); await key(keyName, keyName, vk); await sleep(150)
+      check(`两个相邻高亮块:${name},光标出现在两者之间`, (await selKind()) === 'GapCursor', await selKind())
+      await press('m'); check(`  …输入的字成为两个高亮块之间的普通行`, (await shape()) === 'CALLOUT[p"a"] | p"m" | CALLOUT[p"b"] | p∅', await shape())
+      await leave()
+      check(`  …存盘:A、普通行、B 顺序正确`, (await textOf('s')) === '> [!note] A\n> a\n\nm\n\n> [!tip] B\n> b', JSON.stringify(await textOf('s')))
+    }
+    // 回车:两个相邻高亮块之间
+    await open('> [!note] A\n> a\n\n> [!tip] B\n> b', endOf(0)); await key('ArrowDown', 'ArrowDown', 40); await key('Enter', 'Enter', 13); await sleep(150)
+    check('相邻高亮块之间按回车:新增一个空行,两个高亮块都不变', (await shape()) === 'CALLOUT[p"a"] | p∅ | CALLOUT[p"b"] | p∅', await shape())
+    await leave()
+    // 三个连续高亮块,在中间两处都能插入
+    await open('> [!note] A\n> a\n\n> [!tip] B\n> b\n\n> [!info] C\n> c', endOf(1)); await key('ArrowDown', 'ArrowDown', 40); await sleep(120); await press('y')
+    check('三个连续高亮块:在 B 与 C 之间插入', (await shape()) === 'CALLOUT[p"a"] | CALLOUT[p"b"] | p"y" | CALLOUT[p"c"] | p∅', await shape())
+    await leave()
+
+    // ---- 不该被拦截的方向键 ----
+    await open('前文\n\n> [!note] T\n> 内容', startOf(0)); await key('ArrowUp', 'ArrowUp', 38); await sleep(120); await press('z')
+    check('前面已有普通段落时,在正文开头按 ↑ 正常进入上一段(不出现间隙光标)', (await selKind()) === 'TextSelection' && (await shape()).startsWith('p"前z文"'), await shape())
+    await leave()
+    await open('> [!note] T\n> 一\n>\n> 二', startOf(1)); await key('ArrowUp', 'ArrowUp', 38); await sleep(120); await press('z')
+    check('高亮块多段:第二段开头按 ↑ 回到第一段(不跳出高亮块)', (await shape()) === 'CALLOUT[p"z一",p"二"] | p∅', await shape())
+    await leave()
+    await open('> [!note] T\n> 内容', endOf(0)); await key('ArrowDown', 'ArrowDown', 40); await sleep(120); await press('z')
+    check('文档末尾的高亮块:末尾按 ↓ 进入其后的尾随行', (await shape()) === 'CALLOUT[p"内容"] | p"z"', await shape())
+    await leave()
+    // 带 Shift 的选择不被拦截
+    await open('> [!note] T\n> 内容', startOf(0)); await key('ArrowUp', 'ArrowUp', 38, { modifiers: 8 }); await sleep(120)
+    check('Shift+↑ 是选择操作,不触发间隙光标', (await selKind()) !== 'GapCursor', await selKind())
+    await leave()
+    // 数据没有被改动
+    await open('> [!note] T\n> 内容', startOf(0)); await key('ArrowUp', 'ArrowUp', 38); await key('ArrowDown', 'ArrowDown', 40); await sleep(100); await leave()
+    check('只移动光标、不输入:存盘内容不变', (await textOf('s')) === '> [!note] T\n> 内容', JSON.stringify(await textOf('s')))
+  }
   console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
