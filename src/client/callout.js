@@ -17,9 +17,11 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { GapCursor } from '@tiptap/pm/gapcursor'
 import { parseCalloutHead, formatCalloutHead, splitFirstLine, canonicalType, defaultTitle, isValidType } from '../core/callout.js'
 
+// 注意:属性级 parseHTML 在返回非 null 时会覆盖解析规则里 getAttrs 算出的同名属性。
+// 所以元素上没有对应 data- 属性时必须返回 null(而不是默认值),让规则里的 getAttrs 决定;缺省值由 default 负责。
 const attr = (name, def) => ({
   default: def,
-  parseHTML: (el) => el.getAttribute('data-' + name.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())) ?? def,
+  parseHTML: (el) => el.getAttribute('data-' + name.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())),
   renderHTML: (a) => (a[name] == null || a[name] === '' ? {} : { ['data-' + name.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())]: a[name] }),
 })
 
@@ -69,6 +71,30 @@ export const Callout = Blockquote.extend({
           calloutFold: el.getAttribute('data-fold') || null,
           calloutTitle: el.querySelector('.wb-callout-title-text')?.textContent?.trim() === defaultTitle(el.getAttribute('data-callout') || 'note') ? '' : (el.querySelector('.wb-callout-title-text')?.textContent?.trim() || ''),
         }),
+      },
+      // Obsidian 阅读模式(及 Obsidian Publish)复制出来的 callout:
+      //   <div class="callout" data-callout="warning"><div class="callout-title"><div class="callout-title-inner">标题</div></div><div class="callout-content">…</div></div>
+      {
+        tag: 'div.callout[data-callout]',
+        contentElement: '.callout-content',
+        getAttrs: (el) => {
+          const type = (el.getAttribute('data-callout') || 'note').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'note'
+          const fold = el.getAttribute('data-callout-fold')
+          const title = el.querySelector('.callout-title-inner')?.textContent?.trim() || ''
+          return { calloutType: type, calloutFold: fold === '-' ? 'closed' : fold === '+' ? 'open' : null, calloutTitle: title.toLowerCase() === type.toLowerCase() ? '' : title }
+        },
+      },
+      // 本应用复制出去、又粘回来的高亮块(复制时降级成了带内联样式的引用块,带 data-wb-callout 标记)
+      {
+        tag: 'blockquote[data-wb-callout]',
+        getAttrs: (el) => {
+          const type = (el.getAttribute('data-wb-callout') || 'note').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'note'
+          const titleEl = el.querySelector(':scope > [data-wb-callout-title]')
+          const title = titleEl?.textContent?.trim() || ''
+          titleEl?.remove()          // 标题是属性,不能再作为正文里的一段出现(解析发生在剪贴板内容的副本上,不影响页面)
+          const fold = el.getAttribute('data-wb-callout-fold')
+          return { calloutType: type, calloutFold: fold === 'closed' || fold === 'open' ? fold : null, calloutTitle: title }
+        },
       },
       { tag: 'blockquote' },
     ]

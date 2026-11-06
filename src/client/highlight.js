@@ -6,6 +6,7 @@
 //   - 里面可以有粗体、斜体、链接等其它行内格式。
 
 import { Mark, mergeAttributes, markInputRule, markPasteRule } from '@tiptap/core'
+import { markLeadingMarkers, resolveSentinel } from '../core/mdescape.js'
 
 const OPEN = /^==(?=[^\s=])/
 // 找结束的 "==":前一个字符不是空白,且不是转义;跳过行内代码段
@@ -73,6 +74,10 @@ export function escapeLiteralHighlight(editor) {
   const mgr = editor?.markdown
   if (!mgr || mgr.__wbEscapePatched) return
   const base = mgr.escapeMarkdownSyntax.bind(mgr)
-  mgr.escapeMarkdownSyntax = (text) => base(text).replace(/={2,}/g, (run) => run.split('').map(() => '\\=').join(''))
+  // 先转义 "=="(上面的说明),再把行首哨兵换成反斜杠(行首的 # - 1. --- 等,见 core/mdescape.js)
+  mgr.escapeMarkdownSyntax = (text) => resolveSentinel(base(text).replace(/={2,}/g, (run) => run.split('').map(() => '\\=').join('')))
+  // 序列化入口:先给"行首像 Markdown 结构的普通段落"打哨兵
+  const ser = mgr.serialize.bind(mgr)
+  mgr.serialize = (doc) => ser(markLeadingMarkers(doc))
   mgr.__wbEscapePatched = true
 }

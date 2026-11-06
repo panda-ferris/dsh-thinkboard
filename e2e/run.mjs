@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
-import { spawn } from 'node:child_process'
+import { spawn, execSync } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { writeFile, mkdir } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
@@ -22,21 +22,35 @@ const pickPort = async () => {
 }
 const port = await pickPort()
 const profileDir = mkdtempSync(join(tmpdir(), 'wb-chrome-'))
-const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, '--window-size=1200,800', 'about:blank'], { stdio: 'ignore' })
+const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, '--window-size=1200,800',
+  // 禁止后台/遮挡节流:机器忙、锁屏、窗口被遮挡时,系统会把没有可见窗口的浏览器页面挂起,表现为页面突然不响应(CPU 0%),与产品无关
+  '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion', 'about:blank'], { stdio: 'ignore' })
 let ws, id = 0; const pending = new Map()
 // 每条 CDP 命令 20 秒超时:页面卡死时直接报出"哪条命令没返回",而不是让整套测试无声地挂住
 const send = (method, params = {}) => new Promise((r, rej) => { const i = ++id; const to = setTimeout(() => { pending.delete(i); rej(new Error(`CDP 命令超时(20s): ${method} ${JSON.stringify(params).slice(0, 160)}`)) }, 20000); pending.set(i, (x) => { clearTimeout(to); r(x) }); ws.send(JSON.stringify({ id: i, method, params })) })
 const ev = async (expr) => { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails.exception?.description ?? r.result.exceptionDetails)); return r.result?.result?.value }
 const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
 const drag = async (x1, y1, x2, y2, steps = 8, extra = {}) => { await mouse('mousePressed', x1, y1, extra); for (let i = 1; i <= steps; i++) await mouse('mouseMoved', x1 + ((x2 - x1) * i) / steps, y1 + ((y2 - y1) * i) / steps, extra); await mouse('mouseReleased', x2, y2, extra) }
+// 等到条件成立(页面里求值的表达式为真),最多 ms 毫秒;返回是否成立。比固定睡眠稳:条件成立立即继续,机器忙时自动多等。
+const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await sleep(60) } return false }
+// 只跑部分新增测试段(第 1690 行起的、自包含的段落):`node e2e/run.mjs --only=复制粘贴`;不带参数则全部运行。
+// 整套 700+ 项在机器忙时偶发"页面无响应"(与产品无关),拆开跑可以更快得到结论。更早的老段落共享局部变量,不参与过滤。
+const onlyArg = process.argv.find((a) => a.startsWith('--only='))
+const ONLY = onlyArg ? onlyArg.slice(7).split(',').map((x) => x.trim()).filter(Boolean) : null
+const want = (title) => !ONLY || ONLY.some((k) => title.includes(k))
 const results = []
+const pageEvents = []
 const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info }); console.log(ok ? '  ✔' : '  ✖', name, info); if (!ok) failCtx.push(name) }
 // 第一次失败时记录浏览器环境(窗口大小、焦点、是否有残留浮层),用于区分"产品问题"和"环境偶发"
 const failCtx = []
 let ctxLogged = false
+// 浏览器进程状态:S=睡眠(正常) R=运行 T=被暂停(SIGSTOP/终端作业控制) U=不可中断等待。页面卡死时 T 或 U 就是系统层面的问题,不是页面代码
+const chromeProcStates = () => { try { return execSync(`ps -Ao pid=,state=,pcpu=,command= | grep -F ${JSON.stringify(profileDir)} | grep -v grep`, { encoding: 'utf8' }).trim().split('\n').map((l) => { const m = l.trim().match(/^(\d+)\s+(\S+)\s+([\d.]+)\s+(.*)$/); return m ? `${m[1]}:${m[2]}:${m[3]}%:${(m[4].match(/--type=(\w[\w-]*)/) || [, 'main'])[1]}` : l.slice(0, 40) }).join('  ') } catch { return '(读取失败)' } }
 const logFailureContext = async () => {
   if (ctxLogged || !failCtx.length) return
   ctxLogged = true
+  console.log('   [浏览器进程状态]', chromeProcStates())
+  console.log('   [页面事件]', JSON.stringify(typeof pageEvents === 'undefined' ? [] : pageEvents))
   try { console.log('   [现场]', JSON.stringify(await ev(`({win:[innerWidth,innerHeight],dpr:devicePixelRatio,focus:document.hasFocus(),active:(document.activeElement?.className||document.activeElement?.tagName||'').toString().slice(0,40),menu:!!document.querySelector('.wb-slash'),tbltool:!!document.querySelector('.wb-tbltool'),editing:window.__wb?.store.getState().editing,vp:window.__wb?.store.getState().viewport,errs:window.__wb?.errors})`))) } catch (e) { console.log('   [现场] 读取失败:', e.message) }
 }
 try {
@@ -44,8 +58,15 @@ try {
   for (let i = 0; i < 50; i++) { try { targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); break } catch { await sleep(200) } }
   ws = new WebSocket(targets.find((t) => t.type === 'page').webSocketDebuggerUrl)
   await new Promise((r) => ws.addEventListener('open', r))
-  ws.addEventListener('message', (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) } })
-  await send('Page.enable'); await send('Runtime.enable')
+  // 页面事件:JS 弹窗(alert/confirm/prompt)会让页面主线程停住、所有求值超时,CPU 为 0%——自动关掉并记录;页面崩溃/断开也记录
+  ws.addEventListener('message', (e) => {
+    const m = JSON.parse(e.data)
+    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return }
+    if (m.method === 'Page.javascriptDialogOpening') { pageEvents.push(`弹窗 ${m.params.type}: ${String(m.params.message).slice(0, 80)}`); ws.send(JSON.stringify({ id: ++id, method: 'Page.handleJavaScriptDialog', params: { accept: false } })) }
+    else if (m.method === 'Inspector.targetCrashed' || m.method === 'Target.targetCrashed') pageEvents.push('页面崩溃 ' + m.method)
+    else if (m.method === 'Runtime.exceptionThrown') pageEvents.push('未捕获异常 ' + String(m.params.exceptionDetails?.exception?.description || m.params.exceptionDetails?.text).split('\n')[0].slice(0, 120))
+  })
+  await send('Page.enable'); await send('Runtime.enable'); await send('Inspector.enable').catch(() => {})
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'try{localStorage.clear()}catch(e){}' })
   await send('Page.navigate', { url: 'file://' + resolve('e2e/out/index.html') })
   for (let i = 0; i < 40 && (await ev('document.title')) !== 'READY'; i++) await sleep(150)
@@ -1658,6 +1679,7 @@ try {
     // 7) 在单元格里继续编辑:Tab 缩进列表项
     await ev(`window.__wb.store.select(['tbl3']); window.__wb.store.setEditing('tbl3')`); await sleep(500)
     await ev(`(()=>{const ed=document.querySelector('[data-wb-node="tbl3"] .ProseMirror');ed.focus();const w=document.createTreeWalker(ed,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){if(n.textContent==='号码包'){const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r);return}}})()`)
+    await until(`(()=>{const pm=document.querySelector('[data-wb-node="tbl3"] .ProseMirror');const ds=getSelection();if(!pm||!pm.editor||!ds.anchorNode)return false;try{return pm.editor.view.posAtDOM(ds.anchorNode,ds.anchorOffset)===pm.editor.state.selection.from}catch(e){return false}})()`)   // 等 ProseMirror 选区追上 DOM 选区,再按 Tab
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: 0 }); await sleep(200)
     await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600)
     const after = await ev(`(()=>{const c=document.querySelector('[data-wb-node="tbl3"] .wb-body td');return {nestedOl:c.querySelectorAll('ol ol').length}})()`)
@@ -1665,6 +1687,7 @@ try {
     check('编辑后存盘仍是 HTML 表格', /<table>/.test(await mdOf('tbl3')))
   }
 
+  if (want('slash 命令:表格 / 图片 / 常用块')) {
   console.log('slash 命令:表格 / 图片 / 常用块')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
@@ -1673,7 +1696,9 @@ try {
     const openEditor = async (id, text = '') => { await reset([T(id, 100, 100, 480, 360, { title: 'slash', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['${id}']); window.__wb.store.setEditing('${id}')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="${id}"] .ProseMirror');ed.focus();const r=document.createRange();r.selectNodeContents(ed);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`) }
     const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
     // 等到条件成立(最多 3 秒),比固定睡眠稳:渲染快慢不同的机器上都不会误判
-    const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await sleep(60) } return false }
+    // 插入表格后"可以开始操作"的完整条件:表格出现 + 焦点回到编辑器 + 光标落进某个单元格里的段落。
+    // 脚本比真人快得多,只等"表格出现"就打字/断言光标,会赶在焦点和选区就位之前(偶发失败的根源)。统一用这个函数。
+    const tableReady = (id) => until(`(()=>{const pm=document.querySelector('[data-wb-node="${id}"] .ProseMirror');if(!pm||!pm.querySelector('table')||!pm.contains(document.activeElement))return false;const s=pm.editor.state.selection;return s.$from.parent.type.name==='paragraph'&&s.$from.depth>=4})()`)
 
     // ---- 触发与过滤 ----
     await openEditor('sl1')
@@ -1725,7 +1750,7 @@ try {
     await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('4x3'); await sleep(100)
     check('输入 4x3 时预览显示 4 行 × 3 列', (await ev(`document.querySelector('.wb-slash-sizelabel').textContent`)) === 'slash.tableSize')
     check('网格高亮 4×3 共 12 格', (await ev(`document.querySelectorAll('.wb-slash-cell.is-on').length`)) === 12)
-    await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="sl8"] .ProseMirror table')`)
+    await key('Enter', 'Enter', 13); await tableReady('sl8')
     { const d = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl8"] .ProseMirror table');return t?{rows:t.querySelectorAll('tr').length,cols:t.querySelector('tr').children.length,th:t.querySelectorAll('th').length}:null})()`)
       check('插入 4 行 3 列、首行是表头的表格', !!d && d.rows === 4 && d.cols === 3 && d.th === 3, JSON.stringify(d)) }
     check('插入后菜单关闭,"/table" 被删除', (await menu()) === null && !(await ev(`document.querySelector('[data-wb-node="sl8"] .ProseMirror').textContent`)).includes('/table'))
@@ -1748,12 +1773,12 @@ try {
     await leave()
     // 超范围尺寸被夹住;非法输入不插入
     await openEditor('sl10'); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(200)
-    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('99x99'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="sl10"] .ProseMirror table')`)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('99x99'); await key('Enter', 'Enter', 13); await tableReady('sl10')
     { const d = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl10"] .ProseMirror table');return t?{rows:t.querySelectorAll('tr').length,cols:t.querySelector('tr').children.length}:null})()`)
       check('尺寸过大被夹到上限(20 行 × 10 列)', !!d && d.rows === 20 && d.cols === 10, JSON.stringify(d)) }
     await leave()
     await openEditor('sl11'); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(200)
-    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('乱写'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="sl11"] .ProseMirror table')`)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('乱写'); await key('Enter', 'Enter', 13); await tableReady('sl11')
     { const d = await ev(`(()=>{const t=document.querySelector('[data-wb-node="sl11"] .ProseMirror table');return t?{rows:t.querySelectorAll('tr').length,cols:t.querySelector('tr').children.length}:null})()`)
       check('输入框写了无法识别的尺寸:按当前网格高亮(默认 3×3)插入', !!d && d.rows === 3 && d.cols === 3, JSON.stringify(d)) }
     await leave()
@@ -1770,7 +1795,9 @@ try {
     await leave()
     check('单元格里有列表的表格存成 HTML(不丢列表)', /<table>/.test(await textOf('sl13')) && /<ul>/.test(await textOf('sl13')))
   }
+  }
 
+  if (want('slash 菜单在白板画布里:平移 / 缩放下不漂移,卡片不跳动')) {
   console.log('slash 菜单在白板画布里:平移 / 缩放下不漂移,卡片不跳动')
   { const key = (k, code, vk) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
@@ -1847,11 +1874,13 @@ try {
     check('缩放画布里按尺寸插入表格:3 行 2 列', await ev(`(()=>{const t=document.querySelector('[data-wb-node="dr"] .ProseMirror table');return !!t&&t.querySelectorAll('tr').length===3&&t.querySelector('tr').children.length===2})()`))
     await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
   }
+  }
+  if (want('高亮块(callout)与 ==高亮==:语法同 Obsidian')) {
   console.log('高亮块(callout)与 ==高亮==:语法同 Obsidian')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
     const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
-    const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await sleep(60) } return false }
+    const tableReady = (id) => until(`(()=>{const pm=document.querySelector('[data-wb-node="${id}"] .ProseMirror');if(!pm||!pm.querySelector('table')||!pm.contains(document.activeElement))return false;const s=pm.editor.state.selection;return s.$from.parent.type.name==='paragraph'&&s.$from.depth>=4})()`)
     const openEditor = async (id, text = '') => { await reset([T(id, 100, 100, 480, 360, { title: 'co', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['${id}']); window.__wb.store.setEditing('${id}')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="${id}"] .ProseMirror');ed.focus();const r=document.createRange();r.selectNodeContents(ed);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`) }
     const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
     const view = (id) => ev(`(()=>{const c=document.querySelector('[data-wb-node="${id}"] .wb-body .wb-callout');if(!c)return null;const q=(s)=>c.querySelector(s);return {type:c.dataset.callout,color:c.dataset.calloutColor,fold:c.dataset.fold||null,title:q('.wb-callout-title-text')?.textContent,bodyVisible:getComputedStyle(q('.wb-callout-body')).display!=='none',bodyText:q('.wb-callout-body')?.textContent,icon:q('.wb-callout-icon')?.dataset.icon}})()`)
@@ -1967,9 +1996,7 @@ try {
     check('普通引用不会被无端加上类型', (await textOf('q1')) === '> 普通引用', JSON.stringify(await textOf('q1')))
     // 表格单元格里的高亮块:单元格含块级内容 → 整张表存 HTML,不丢高亮块
     await openEditor('t1'); await typeText('/table'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-table]')`)
-    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('2x2'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="t1"] .ProseMirror table')`)
-    // 表格一出现就立刻打字会赶在"焦点回到编辑器、选区落进第一格"之前(真人有操作延迟,脚本没有):先等这两个条件
-    await until(`(()=>{const pm=document.querySelector('[data-wb-node="t1"] .ProseMirror');if(!pm||!pm.contains(document.activeElement))return false;const s=pm.editor.state.selection;return s.$from.parent.type.name==='paragraph'&&s.$from.depth>=4})()`)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('2x2'); await key('Enter', 'Enter', 13); await tableReady('t1')
     await typeText('/高亮块'); await until(`!!document.querySelector('.wb-slash [data-slash="callout"]')`)          // 等菜单按输入过滤完毕、"高亮块"出现并成为高亮项
     await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-types]')`)               // 等类型列表出现
     await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="t1"] .ProseMirror .wb-callout')`)   // 等高亮块真的插入
@@ -1977,6 +2004,8 @@ try {
     { const md = await textOf('t1'); const v = await ev(`!!document.querySelector('[data-wb-node="t1"] .wb-body td .wb-callout, [data-wb-node="t1"] .wb-body th .wb-callout')`)
       check('表格单元格里的高亮块:存盘不丢,渲染仍是高亮块', /单元格里的提示/.test(md) && v, JSON.stringify(md).slice(0, 200)) }
   }
+  }
+  if (want('高亮块的光标行为:退格不跳出、前后/之间可以加普通行')) {
   console.log('高亮块的光标行为:退格不跳出、前后/之间可以加普通行')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     // 真实按键输入一个字符(insertText 绕过 ProseMirror 对间隙光标的输入处理,不能代表用户)
@@ -1984,7 +2013,10 @@ try {
     const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
     const shape = () => ev(`(()=>{const pm=document.querySelector('[data-wb-node="s"] .ProseMirror');if(!pm)return null;const d=(n)=>n.classList.contains('wb-callout')?'CALLOUT['+[...n.querySelector('.wb-callout-body').children].map(d).join(',')+']':n.tagName.toLowerCase()+(n.textContent?'"'+n.textContent.slice(0,8)+'"':'∅');return [...pm.children].filter(c=>!c.classList.contains('ProseMirror-gapcursor')).map(d).join(' | ')})()`)
     const selKind = () => ev(`document.querySelector('[data-wb-node="s"] .ProseMirror')?.editor?.state.selection.constructor.name.replace('_','')`)
-    const open = async (text, caret) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();${caret}})()`) }
+    // 等 ProseMirror 的选区追上浏览器 DOM 选区:脚本直接改 DOM 选区后,ProseMirror 要等一次 selectionchange 事件才同步进自己的状态;
+    // 机器忙时这一步会晚于紧接着的按键,按键就会作用在旧选区上。比固定睡眠更稳:条件成立立即继续,不成立最多等 3 秒。
+    const syncSel = () => until(`(()=>{const pm=document.querySelector('[data-wb-node="s"] .ProseMirror');if(!pm||!pm.editor)return false;const ds=getSelection();if(!ds.anchorNode)return false;const st=pm.editor.state.selection;try{const dp=pm.editor.view.posAtDOM(ds.anchorNode,ds.anchorOffset);return st.empty&&dp===st.from}catch(e){return false}})()`)
+    const open = async (text, caret) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();${caret}})()`) ; await syncSel() }
     const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
     const startOf = (n) => `const p=[...document.querySelectorAll('[data-wb-node="s"] .wb-callout-body p')][${n}];const r=document.createRange();r.setStart(p.firstChild||p,0);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)`
     const endOf = (n) => `const p=[...document.querySelectorAll('[data-wb-node="s"] .wb-callout-body p')][${n}];const r=document.createRange();r.selectNodeContents(p);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)`
@@ -2065,13 +2097,18 @@ try {
     await open('> [!note] T\n> 内容', startOf(0)); await key('ArrowUp', 'ArrowUp', 38); await key('ArrowDown', 'ArrowDown', 40); await sleep(100); await leave()
     check('只移动光标、不输入:存盘内容不变', (await textOf('s')) === '> [!note] T\n> 内容', JSON.stringify(await textOf('s')))
   }
+  }
+  if (want('高亮块里按回车:空块不被删除')) {
   console.log('高亮块里按回车:空块不被删除')
   { const key = (k, code, vk) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk })
     const press = async (ch) => { const up = ch.toUpperCase(); await send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0), text: ch }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0) }); await sleep(60) }
     const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
     const shape = () => ev(`(()=>{const pm=document.querySelector('[data-wb-node="s"] .ProseMirror');if(!pm)return null;const d=(n)=>n.classList.contains('wb-callout')?'CALLOUT['+[...n.querySelector('.wb-callout-body').children].map(d).join(',')+']':n.tagName.toLowerCase()+(n.textContent?'"'+n.textContent.slice(0,8)+'"':'∅');return [...pm.children].filter(c=>!c.classList.contains('ProseMirror-gapcursor')).map(d).join(' | ')})()`)
     const where = () => ev(`(()=>{const n=document.getSelection().anchorNode;const e=n&&(n.nodeType===3?n.parentElement:n);const c=e&&e.closest('.wb-callout');return c?'块内第'+([...c.querySelector('.wb-callout-body').children].indexOf(e.closest('.wb-callout-body > *'))+1)+'行':'块外'})()`)
-    const open = async (text, caret) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();${caret}})()`) }
+    // 等 ProseMirror 的选区追上浏览器 DOM 选区:脚本直接改 DOM 选区后,ProseMirror 要等一次 selectionchange 事件才同步进自己的状态;
+    // 机器忙时这一步会晚于紧接着的按键,按键就会作用在旧选区上。比固定睡眠更稳:条件成立立即继续,不成立最多等 3 秒。
+    const syncSel = () => until(`(()=>{const pm=document.querySelector('[data-wb-node="s"] .ProseMirror');if(!pm||!pm.editor)return false;const ds=getSelection();if(!ds.anchorNode)return false;const st=pm.editor.state.selection;try{const dp=pm.editor.view.posAtDOM(ds.anchorNode,ds.anchorOffset);return st.empty&&dp===st.from}catch(e){return false}})()`)
+    const open = async (text, caret) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();${caret}})()`) ; await syncSel() }
     const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
     const firstP = `const p=document.querySelector('[data-wb-node="s"] .wb-callout-body p');const r=document.createRange();r.selectNodeContents(p);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)`
     const endOfFirst = `const p=document.querySelector('[data-wb-node="s"] .wb-callout-body p');const r=document.createRange();r.selectNodeContents(p);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)`
@@ -2128,6 +2165,8 @@ try {
     check('普通空段落里回车:照常新增一行', (await shape()) === 'p∅ | p∅ | p∅' || (await shape()).startsWith('p∅ | p∅'), await shape())
     await leave()
   }
+  }
+  if (want('表格列宽:手动拖拽、存盘、渲染、撤销')) {
   console.log('表格列宽:手动拖拽、存盘、渲染、撤销')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const press = async (ch) => { const up = ch.toUpperCase(); await send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0), text: ch }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0) }); await sleep(60) }
@@ -2228,6 +2267,8 @@ try {
       await drag(70, b.x - 1, b.y); await sleep(600)
       check('详情面板里也能拖拽列宽,并写回卡片', /<table>/.test(await textOf('s')) && /colwidth="\d+"/.test(await textOf('s')), (await textOf('s')).slice(0, 120)) }
   }
+  }
+  if (want('表格浮动工具条:增删行列、表头、删除表格')) {
   console.log('表格浮动工具条:增删行列、表头、删除表格')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
@@ -2341,6 +2382,101 @@ try {
     check('  …详情面板里点"插入行":写回卡片', /\|\s*\|\s*\|/.test(await textOf('s')), (await textOf('s')).slice(0, 120))
     check('页面没有 React 或未捕获错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))
   }
+  }
+  if (want('复制粘贴:粘贴 Markdown 文本 / 外部 HTML;复制出 Markdown + 外部可读 HTML')) {
+  console.log('复制粘贴:粘贴 Markdown 文本 / 外部 HTML;复制出 Markdown + 外部可读 HTML')
+  { const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const open = async (text = '') => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`document.querySelector('[data-wb-node="s"] .ProseMirror').focus()`) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    const paste = (o) => ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();const dt=new DataTransfer();${o.html != null ? `dt.setData('text/html',${JSON.stringify(o.html)});` : ''}${o.text != null ? `dt.setData('text/plain',${JSON.stringify(o.text)});` : ''}const e=new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true});ed.dispatchEvent(e);return e.defaultPrevented})()`)
+    const pasted = async (o) => { await open(); await paste(o); await sleep(450); await leave(); return textOf('s') }
+
+    // ---- 粘贴 Markdown 文本(Obsidian 编辑模式 / 任何 .md 来源) ----
+    const MDTXT = '# 标题\n\n- 一\n  - 二\n\n> [!note] 提示\n> 内容\n\n==高亮== 与 **粗**\n\n| a | b |\n| --- | --- |\n| 1 | 2 |'
+    { const r = await pasted({ text: MDTXT })
+      check('粘贴 Markdown 文本:标题正确', /^# 标题/.test(r), JSON.stringify(r))
+      check('  …嵌套列表正确(不再多出空行)', /- 一\n  - 二/.test(r), JSON.stringify(r))
+      check('  …callout 还原为高亮块(不是 &gt; \\[!note\\])', /> \[!note\] 提示\n> 内容/.test(r) && !/&gt;|\\\[/.test(r), JSON.stringify(r))
+      check('  …==高亮== 与粗体保留', /==高亮==/.test(r) && /\*\*粗\*\*/.test(r), JSON.stringify(r))
+      check('  …表格是一张整表(不被拆成逐行段落)', /\| a\s+\| b\s+\|\n\| -+ \| -+ \|\n\| 1\s+\| 2\s+\|/.test(r), JSON.stringify(r)) }
+    // 普通文字不解析
+    for (const [name, txt] of [['一句普通文字', '今天天气不错'], ['含星号的算式', '价格是 3*4=12 元'], ['单行"- 开头"', '- 就这一行'], ['路径与等号', '看 a/b 目录,a == b']]) {
+      const r = await pasted({ text: txt }); check(`粘贴普通文字不改写:${name}`, r.replace(/\\/g, '') === txt || r === txt, JSON.stringify(r))
+    }
+    // 有 HTML 的来源走 HTML 路径,不会被当成 Markdown 文本解析
+    { const r = await pasted({ html: '<p># 不是标题</p>', text: '# 不是标题' })
+      check('带 HTML 的来源(网页等):走 HTML 路径,不当作 Markdown 文本解析', r.includes('不是标题'), JSON.stringify(r))
+      check('  …存盘时行首的 # 被转义,下次读入不会变成标题', /^\\# 不是标题/.test(r), JSON.stringify(r))
+      await reset([T('s', 100, 100, 480, 200, { title: 't', text: r })]); await sleep(400)
+      check('  …重新渲染仍是普通段落', await ev(`!document.querySelector('[data-wb-node="s"] .wb-body h1') && document.querySelector('[data-wb-node="s"] .wb-body p')?.textContent.includes('# 不是标题')`)) }
+    // 行首像 Markdown 结构的普通文字:Word/网页里手打的编号、横线等不能在存盘后变成列表/分割线
+    for (const [txt, re, name] of [['1. 背景介绍', /^1\\\. 背景介绍/, '手打的 "1. 背景介绍"'], ['- 一个短横线开头', /^\\- 一个短横线开头/, '"- 开头"的文字'], ['---', /^\\---/, '"---" 单独一行']]) {
+      const r = await pasted({ html: `<p>${txt}</p>`, text: txt })
+      check(`HTML 粘贴的${name}:存盘转义,不会被读成列表/分割线`, re.test(r), JSON.stringify(r))
+    }
+    // 代码块里粘贴 Markdown 文本:原样当字面文字
+    await open('```\n\n```'); await ev(`(()=>{const c=document.querySelector('[data-wb-node="s"] .ProseMirror code');const r=document.createRange();r.selectNodeContents(c);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    await paste({ text: '# 在代码块里\n- 不解析' }); await sleep(350); await leave()
+    check('在代码块里粘贴 Markdown 文本:保持字面,不解析', /```\n# 在代码块里\n- 不解析\n```/.test(await textOf('s')), JSON.stringify(await textOf('s')))
+    // 粘贴后一步撤销
+    await open(); await paste({ text: MDTXT }); await sleep(350)
+    const mod = /Mac/i.test(await ev('navigator.platform')) ? 4 : 2
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: mod }); await sleep(300)
+    check('⌘Z 一步撤销整次粘贴', (await ev(`document.querySelector('[data-wb-node="s"] .ProseMirror').textContent`)) === '', await ev(`document.querySelector('[data-wb-node="s"] .ProseMirror').textContent`))
+    await leave()
+
+    // ---- 粘贴外部 HTML ----
+    { const r = await pasted({ html: '<p>这是 <span style="background-color:rgb(255,246,122)">重点</span> 文字,<span style="background:#fff">白底</span>不算</p>', text: '这是 重点 文字,白底不算' })
+      check('飞书/Word 风格的背景色高亮 → ==高亮==', /==重点==/.test(r) && !/==白底==/.test(r), JSON.stringify(r)) }
+    { const r = await pasted({ html: '<div class="callout" data-callout="warning"><div class="callout-title"><div class="callout-title-inner">注意事项</div></div><div class="callout-content"><p>小心</p></div></div>', text: '注意事项\n小心' })
+      check('Obsidian 阅读模式的 callout → 高亮块(类型与标题保留)', /> \[!warning\] 注意事项\n> 小心/.test(r), JSON.stringify(r)) }
+    { const r = await pasted({ html: '<div class="callout" data-callout="tip"><div class="callout-title"><div class="callout-title-inner">Tip</div></div><div class="callout-content"><p>x</p></div></div>', text: 'Tip\nx' })
+      check('  …标题等于类型名时不重复写标题', /^> \[!tip\]\n> x/.test(r), JSON.stringify(r)) }
+    { const r = await pasted({ html: '<p><a href="source_id:6ed8f3d5-6bd3">[图片: image.png]</a></p>', text: '[图片: image.png]' })
+      check('KM 的图片死链接 → 占位文字,不留死链接', !/source_id/.test(r) && /来自外部文档,无法导入/.test(r) && /image\.png/.test(r), JSON.stringify(r)) }
+    { const r = await pasted({ html: '<h2>标题</h2><ul><li>一<ul><li>二</li></ul></li></ul><table><tr><th>甲</th><th>乙</th></tr><tr><td>1</td><td>2</td></tr></table>', text: '标题 一 二' })
+      check('标准网页 HTML:标题、嵌套列表、表格仍正确(没有被预处理破坏)', /^## 标题/.test(r) && /- 一\n  - 二/.test(r) && /\| 甲\s+\| 乙\s+\|/.test(r), JSON.stringify(r)) }
+    { const r = await pasted({ html: '<p>正常 <a href="https://a.com">链接</a> 保留</p>', text: '正常 链接 保留' })
+      check('正常链接不受死链接处理的影响', /\[链接\]\(https:\/\/a\.com\)/.test(r), JSON.stringify(r)) }
+
+    // ---- 复制 ----
+    const COPYMD = '## 标题\n\n正文 **粗** ==高亮==\n\n- 一\n  - 二\n\n> [!warning] 注意\n> 小心\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n![图](https://example.com/a.png)'
+    await open(COPYMD)
+    const copied = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return {types:[...dt.types],html:dt.getData('text/html'),plain:dt.getData('text/plain')}})()`)
+    check('复制写入两种格式:text/html 与 text/plain', copied.types.includes('text/html') && copied.types.includes('text/plain'), JSON.stringify(copied.types))
+    check('text/plain 是 Markdown 源码(标题、粗体、高亮、嵌套列表、callout、表格、图片)', /## 标题/.test(copied.plain) && /\*\*粗\*\*/.test(copied.plain) && /==高亮==/.test(copied.plain) && /- 一\n  - 二/.test(copied.plain) && /> \[!warning\] 注意\n> 小心/.test(copied.plain) && /\| a\s+\| b\s+\|/.test(copied.plain) && /!\[图\]\(https:\/\/example\.com\/a\.png\)/.test(copied.plain), JSON.stringify(copied.plain).slice(0, 300))
+    check('text/plain 块之间只有一个空行(没有连续多个空行)', !/\n{3,}/.test(copied.plain))
+    check('text/html:高亮块变成带颜色的引用块(没有我们的 class,外部软件也能显示)', /<blockquote[^>]*style="[^"]*border-left:4px solid #f97316/.test(copied.html) && !/class="[^"]*wb-callout/.test(copied.html) && /注意/.test(copied.html), copied.html.slice(0, 260))
+    check('text/html:表格带内联边框(外部软件不依赖 class 也看得出是表格)', /<table[^>]*border="1"/.test(copied.html) && /<td style="border:1px solid/.test(copied.html) && /<th style="[^"]*background:#f3f3f3/.test(copied.html) && !/<colgroup/.test(copied.html))
+    check('text/html:高亮带内联底色', /<mark style="background-color:#fff176">高亮<\/mark>/.test(copied.html))
+    check('text/html:远程图片原样保留;没有 data: 巨型字符串', /<img src="https:\/\/example\.com\/a\.png"/.test(copied.html) && !/data:image/.test(copied.html))
+    check('text/html:链接不带 target/rel 等编辑器专用属性', /<a href="https:\/\/a\.com"/.test(copied.html) || !/<a /.test(copied.html))
+    await leave()
+    // 只复制一部分:选区内容
+    await open('第一段\n\n第二段 **粗**'); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();const ps=ed.querySelectorAll('p');const r=document.createRange();r.selectNodeContents(ps[1]);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    { const c = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return {html:dt.getData('text/html'),plain:dt.getData('text/plain')}})()`)
+      check('只复制选中的一段:text/plain 只含该段的 Markdown', c.plain === '第二段 **粗**', JSON.stringify(c.plain))
+      check('  …text/html 也只含该段', /第二段/.test(c.html) && !/第一段/.test(c.html), c.html.slice(0, 120)) }
+    await leave()
+    // 复制不影响编辑器里的内容
+    await open(COPYMD); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:new DataTransfer(),bubbles:true,cancelable:true}))})()`); await leave()
+    { const before = await textOf('s')
+      await open(before); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:new DataTransfer(),bubbles:true,cancelable:true}))})()`); await leave()
+      check('复制操作不改动卡片内容', (await textOf('s')) === before, JSON.stringify(await textOf('s')).slice(0, 120))
+      check('卡片存盘里块与块之间只有一个空行(表格前后没有多余空行)', !/\n{3,}/.test(before), JSON.stringify(before)) }
+
+    // ---- 往返:复制再粘贴回本编辑器 ----
+    await open(COPYMD)
+    const clip = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return {html:dt.getData('text/html'),plain:dt.getData('text/plain')}})()`)
+    await leave()
+    { const viaPlain = await pasted({ text: clip.plain })
+      check('往返(只带 Markdown 文本,如粘到记事本再粘回):标题/列表/callout/表格/高亮都还原', /## 标题/.test(viaPlain) && /- 一\n  - 二/.test(viaPlain) && /> \[!warning\] 注意\n> 小心/.test(viaPlain) && /==高亮==/.test(viaPlain) && /\| a\s+\| b\s+\|/.test(viaPlain), JSON.stringify(viaPlain).slice(0, 260))
+      const viaHtml = await pasted({ html: clip.html, text: clip.plain })
+      check('往返(带 HTML,如在白板之间复制):标题/列表/表格/高亮/粗体/高亮块(类型与标题)都还原,表头没有被识别成粗体', /## 标题/.test(viaHtml) && /- 一\n  - 二/.test(viaHtml) && /\| a\s+\| b\s+\|/.test(viaHtml) && !/\*\*a\*\*/.test(viaHtml) && /==高亮==/.test(viaHtml) && /\*\*粗\*\*/.test(viaHtml) && /> \[!warning\] 注意\n> 小心/.test(viaHtml), JSON.stringify(viaHtml).slice(0, 320)) }
+    check('页面没有 React 或未捕获错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))
+  }
+  }
+  if (want('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')) {
   console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
@@ -2409,10 +2545,11 @@ try {
     await ev(`(()=>{const ed=document.querySelector('.wb-detail .ProseMirror');const dt=new DataTransfer();dt.items.add(new File([new Uint8Array([137,80,78,71])],'wide.png',{type:'image/png'}));ed.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}))})()`); await sleep(1200)
     check('详情面板里粘贴图片:写回卡片并存成 assets/ 引用', /\(assets\/[^)]+\)/.test(await textOf('im8')), await textOf('im8'))
   }
+  }
   const shot = await send('Page.captureScreenshot', { format: 'png' })
   await writeFile('e2e/out/shot.png', Buffer.from(shot.result.data, 'base64'))
   check('无未处理错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))
-} catch (e) { console.error('E2E 异常:', e.message); results.push({ name: 'crash', ok: false }); failCtx.push('crash') }
+} catch (e) { console.error('E2E 异常:', e.message); console.error('   [栈]', String(e.stack || '').split('\n').slice(0, 8).join('\n         ')); results.push({ name: 'crash', ok: false }); failCtx.push('crash') }
 finally {
   await logFailureContext().catch(() => {})
   const exited = new Promise((r) => chrome.once('exit', r))

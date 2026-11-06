@@ -22,6 +22,8 @@ import { Highlight, escapeLiteralHighlight } from './highlight.js'
 import { SlashMenu } from './slashmenu.js'
 import { TableToolbar } from './tabletoolbar.js'
 import { runCommand, insertImages, pickImageFiles } from './slashcmds.js'
+import { looksLikeMarkdown, preprocessPastedHtml } from '../core/clipboard.js'
+import { ClipboardOut } from './clipout.js'
 
 const h = React.createElement
 
@@ -146,9 +148,10 @@ const RichTable = Table.extend({
   // resizable 关闭:库自带的列宽拖拽不换算画布缩放,由下面的 ColumnWidth 扩展接管(悬停识别沿用库的插件)
   addOptions() { return { ...this.parent?.(), resizable: false, cellMinWidth: 40, renderWrapper: true } },   // renderWrapper:渲染态(无节点视图)也输出 .tableWrapper,宽表格才有横向滚动容器
   renderMarkdown(node, helpers, ctx) {
+    // 去掉表格输出自带的首尾换行:块与块之间的空行由序列化器统一添加,表格自己再带换行会多出一到两个空行
     const html = complexTableMarkdown(node)
-    if (html !== null) return html
-    return this.parent?.(node, helpers, ctx) ?? ''
+    if (html !== null) return html.replace(/^\n+|\n+$/g, '')
+    return (this.parent?.(node, helpers, ctx) ?? '').replace(/^\n+|\n+$/g, '')
   },
 })
 
@@ -200,6 +203,7 @@ const extensions = (slash) => [
   Markdown,
   RichTable, TableRow, TableHeader, TableCell,
   ColumnWidth,
+  ClipboardOut,
   TaskList, TaskItem.configure({ nested: true }),
   BoardImage.configure({ inline: false, allowBase64: false }),
   ListKeys,
@@ -297,6 +301,7 @@ export function MarkdownEditor({ initial, placeholder, onCommit, autofocus = tru
       titleRef?.current?.removeEventListener('keydown', onTitleKey, true)
       // 卸载前兜底提交,防止切换焦点时丢内容
       if (!done.current) { done.current = true; onCommit(ed.getMarkdown().trim(), true) }
+      setEdState(null)     // 先让工具条放下编辑器(它订阅了编辑器事件),再销毁
       ed.destroy()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -350,9 +355,22 @@ function useSlash({ t, boardId, transport, edRef }) {
   const handlers = React.useMemo(() => ({
     handlePaste: (_view, e) => {
       const files = [...(e.clipboardData?.files ?? [])].filter(isImageFile)
-      if (!files.length) return false
-      e.preventDefault(); insertImages(edRef.current, files, upload, urlFor); return true
+      if (files.length) { e.preventDefault(); insertImages(edRef.current, files, upload, urlFor); return true }
+      // 只有纯文本、且看起来是 Markdown 源码(例如从 Obsidian 编辑模式复制)时,按 Markdown 解析;
+      // 有 text/html 的来源(网页、飞书、Word、Obsidian 阅读模式)走 HTML 路径,不在这里处理。
+      const cd = e.clipboardData
+      const html = cd?.getData('text/html'), text = cd?.getData('text/plain')
+      if (html || !text || !looksLikeMarkdown(text)) return false
+      const ed = edRef.current
+      if (!ed || ed.isDestroyed) return false
+      // 在代码块里粘贴:当字面文字处理
+      if (ed.isActive('codeBlock')) return false
+      e.preventDefault()
+      ed.chain().focus().insertContent(text, { contentType: 'markdown' }).run()
+      return true
     },
+    // 粘贴 HTML 前的预处理:KM 的死链接换成占位文字、飞书/Word 的背景色高亮转成 <mark>
+    transformPastedHTML: (html) => preprocessPastedHtml(html) || html,
     handleDrop: (_view, e) => {
       const files = [...(e.dataTransfer?.files ?? [])].filter(isImageFile)
       if (!files.length) return false
@@ -398,7 +416,7 @@ export function LiveMarkdownEditor({ value, placeholder, onChange, delay = 400, 
     ed.on('blur', flush)
     ed.view.dom.addEventListener('keydown', (e) => e.stopPropagation())
     edRef.current.flush = flush
-    return () => { flush(); ed.destroy() }
+    return () => { flush(); setEdState(null); ed.destroy() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

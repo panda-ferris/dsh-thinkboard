@@ -59,7 +59,7 @@ export function TableToolbar({ editor, t }) {
   }, [editor])
 
   React.useEffect(() => {
-    if (!editor) return
+    if (!editor || editor.isDestroyed) return
     let raf = 0
     const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(compute) }
     editor.on('selectionUpdate', schedule); editor.on('update', schedule); editor.on('focus', schedule); editor.on('blur', schedule)
