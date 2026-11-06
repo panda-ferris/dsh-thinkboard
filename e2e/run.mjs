@@ -2040,6 +2040,69 @@ try {
     await open('> [!note] T\n> 内容', startOf(0)); await key('ArrowUp', 'ArrowUp', 38); await key('ArrowDown', 'ArrowDown', 40); await sleep(100); await leave()
     check('只移动光标、不输入:存盘内容不变', (await textOf('s')) === '> [!note] T\n> 内容', JSON.stringify(await textOf('s')))
   }
+  console.log('高亮块里按回车:空块不被删除')
+  { const key = (k, code, vk) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk })
+    const press = async (ch) => { const up = ch.toUpperCase(); await send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0), text: ch }); await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch, code: 'Key' + up, windowsVirtualKeyCode: up.charCodeAt(0) }); await sleep(60) }
+    const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const shape = () => ev(`(()=>{const pm=document.querySelector('[data-wb-node="s"] .ProseMirror');if(!pm)return null;const d=(n)=>n.classList.contains('wb-callout')?'CALLOUT['+[...n.querySelector('.wb-callout-body').children].map(d).join(',')+']':n.tagName.toLowerCase()+(n.textContent?'"'+n.textContent.slice(0,8)+'"':'∅');return [...pm.children].filter(c=>!c.classList.contains('ProseMirror-gapcursor')).map(d).join(' | ')})()`)
+    const where = () => ev(`(()=>{const n=document.getSelection().anchorNode;const e=n&&(n.nodeType===3?n.parentElement:n);const c=e&&e.closest('.wb-callout');return c?'块内第'+([...c.querySelector('.wb-callout-body').children].indexOf(e.closest('.wb-callout-body > *'))+1)+'行':'块外'})()`)
+    const open = async (text, caret) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();${caret}})()`) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    const firstP = `const p=document.querySelector('[data-wb-node="s"] .wb-callout-body p');const r=document.createRange();r.selectNodeContents(p);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)`
+    const endOfFirst = `const p=document.querySelector('[data-wb-node="s"] .wb-callout-body p');const r=document.createRange();r.selectNodeContents(p);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)`
+
+    // 空高亮块(只有标题、没有正文)里回车
+    await open('> [!note] 标题', firstP)
+    check('初始:只有标题的高亮块,光标在里面', (await shape()) === 'CALLOUT[p∅] | p∅' && (await where()) === '块内第1行', await shape())
+    await key('Enter', 'Enter', 13); await sleep(150)
+    check('空高亮块里按回车:高亮块保留,块内新增一行,光标在新行', (await shape()) === 'CALLOUT[p∅,p∅] | p∅' && (await where()) === '块内第2行', `${await shape()} / ${await where()}`)
+    await press('a')
+    check('此时输入的字落在高亮块里', (await shape()) === 'CALLOUT[p∅,p"a"] | p∅', await shape())
+    await leave()
+    check('存盘:高亮块还在,带着输入的字', /^> \[!note\] 标题\n> a$/.test(await textOf('s')), JSON.stringify(await textOf('s')))
+
+    // 连按回车:第二次(最后一行为空)按通用约定退出到块外,但高亮块始终保留
+    await open('> [!tip] 标题', firstP)
+    await key('Enter', 'Enter', 13); await sleep(120); await key('Enter', 'Enter', 13); await sleep(150)
+    check('再按一次回车:光标退出到高亮块之后,高亮块仍保留', (await shape()).startsWith('CALLOUT[') && (await where()) === '块外', `${await shape()} / ${await where()}`)
+    check('  …高亮块没有因此消失', await ev(`!!document.querySelector('[data-wb-node="s"] .ProseMirror .wb-callout')`))
+    await press('z'); await leave()
+    check('  …退出后输入的字在高亮块之后,高亮块保持原样', (await textOf('s')).startsWith('> [!tip] 标题') && (await textOf('s')).includes('z'), JSON.stringify(await textOf('s')))
+
+    // 有内容的高亮块行为不变
+    await open('> [!note] T\n> 内容', endOfFirst)
+    await key('Enter', 'Enter', 13); await sleep(120)
+    check('有内容的高亮块:末尾回车新增一行(行为不变)', (await shape()) === 'CALLOUT[p"内容",p∅] | p∅' && (await where()) === '块内第2行', await shape())
+    await key('Enter', 'Enter', 13); await sleep(120)
+    check('  …再按一次回车退出到块外,内容保留', (await shape()) === 'CALLOUT[p"内容"] | p∅ | p∅' && (await where()) === '块外', await shape())
+    await leave()
+
+    // 带折叠标记 / 自定义类型的空块同样不被删除
+    await open('> [!faq]- 折叠的空块', firstP); await key('Enter', 'Enter', 13); await sleep(150)
+    check('带折叠标记的空高亮块:回车同样不删除', (await shape()).startsWith('CALLOUT[p∅,p∅]'), await shape())
+    await leave()
+    check('  …折叠标记与标题在存盘后仍保留', /^> \[!faq\]- 折叠的空块/.test(await textOf('s')), JSON.stringify(await textOf('s')))
+    // 嵌套:内层空高亮块回车不影响外层
+    await open('> [!question] 外\n> 外文\n>\n> > [!todo] 内', `const ps=[...document.querySelectorAll('[data-wb-node="s"] .wb-callout .wb-callout .wb-callout-body p')];const p=ps[0];const r=document.createRange();r.selectNodeContents(p);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)`)
+    await key('Enter', 'Enter', 13); await sleep(150)
+    check('嵌套的空高亮块里回车:内外两层高亮块都保留', (await ev(`document.querySelectorAll('[data-wb-node="s"] .ProseMirror .wb-callout').length`)) === 2, await shape())
+    await leave()
+
+    // 不受影响:普通引用、列表里的回车
+    await open('> 引用内容', `const p=document.querySelector('[data-wb-node="s"] blockquote p');const r=document.createRange();r.selectNodeContents(p);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)`)
+    await key('Enter', 'Enter', 13); await sleep(120); await key('Enter', 'Enter', 13); await sleep(150)
+    check('普通引用:连按两次回车仍按通用约定退出引用', (await shape()) === 'blockquote"引用内容" | p∅ | p∅', await shape())
+    await leave()
+    await open('> [!note] T\n> - 一项', `const li=document.querySelector('[data-wb-node="s"] .wb-callout-body li p');const r=document.createRange();r.selectNodeContents(li);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)`)
+    await key('Enter', 'Enter', 13); await sleep(120); await key('Enter', 'Enter', 13); await sleep(150)
+    check('高亮块里的列表:连按两次回车退出列表(列表行为不受高亮块影响)', await ev(`(()=>{const c=document.querySelector('[data-wb-node="s"] .wb-callout');return !!c&&c.querySelectorAll('li').length===1})()`), await shape())
+    await leave()
+    // 空段落不在高亮块里时,回车行为不变
+    await open('', `const p=ed.querySelector('p');const r=document.createRange();r.selectNodeContents(p);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r)`)
+    await key('Enter', 'Enter', 13); await sleep(120)
+    check('普通空段落里回车:照常新增一行', (await shape()) === 'p∅ | p∅ | p∅' || (await shape()).startsWith('p∅ | p∅'), await shape())
+    await leave()
+  }
   console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }

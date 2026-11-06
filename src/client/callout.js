@@ -265,6 +265,18 @@ export const Callout = Blockquote.extend({
     const parentShortcuts = this.parent?.() ?? {}
     return {
       ...parentShortcuts,
+      // 回车:高亮块里"只有一个空段落"时,默认行为(liftEmptyBlock)会把这个空段落提出块外,
+      // 块里没有内容了,高亮块就被一并删掉。改为在块内新增一行:这样回车始终是"新增一行",
+      // 再按一次(此时最后一行为空,而块内已有别的段落)才按通用约定退出块外,高亮块始终保留。
+      Enter: ({ editor }) => {
+        const { selection } = editor.state
+        if (!selection.empty) return false
+        const { $from } = selection
+        if ($from.parent.type.name !== 'paragraph' || $from.parent.content.size !== 0) return false
+        const owner = $from.node($from.depth - 1)
+        if (!owner || owner.type.name !== 'blockquote' || !isValidType(owner.attrs.calloutType) || owner.childCount !== 1) return false
+        return editor.commands.splitBlock()
+      },
       Backspace: ({ editor }) => {
         const { selection } = editor.state
         if (!selection.empty) return false
