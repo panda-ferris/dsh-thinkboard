@@ -430,7 +430,18 @@
 .wb-md .tableWrapper::-webkit-scrollbar-thumb{background:var(--wb-line);border-radius:3px}
 .wb-md-edit.resize-cursor,.wb-md-edit.resize-cursor *{cursor:col-resize !important}
 /* 拖动手柄:列边界上一条细线,拖动时才显示(悬停到边界时库会加上它) */
-.wb-md-edit .column-resize-handle{position:absolute;right:-2px;top:0;bottom:0;width:4px;z-index:20;pointer-events:none;
-  background:var(--wb-accent);opacity:.85;border-radius:2px}
+/* 手柄只是视觉提示(2px 细线);实际可点中的范围由插件的 handleWidth(6px)决定,与这里的粗细无关 */
+.wb-md-edit .column-resize-handle{position:absolute;right:-1px;top:0;bottom:0;width:2px;z-index:20;pointer-events:none;
+  background:var(--wb-accent);opacity:.85}
 .wb-md-edit td:not([data-colwidth]):not(.column-resize-dragging),.wb-md-edit th:not([data-colwidth]):not(.column-resize-dragging){min-width:40px}
 .wb-md-edit.is-col-resizing{user-select:none}
+
+/* ---------- 表格浮动工具条 ---------- */
+.wb-tbltool{position:fixed;z-index:61;display:flex;align-items:center;gap:2px;padding:4px;
+  background:var(--dsw-alias-bg-overlay);border:1px solid var(--wb-line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.2);white-space:nowrap}
+.wb-tbltool-btn{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;padding:0}
+.wb-tbltool-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}
+.wb-tbltool-btn:disabled{opacity:.3;cursor:default}
+.wb-tbltool-btn.is-on{background:var(--dsw-alias-bg-layer-2);color:var(--wb-accent);box-shadow:inset 0 0 0 1.5px var(--wb-accent)}
+.wb-tbltool-btn.is-danger:hover:not(:disabled){background:color-mix(in srgb,#ef4444 18%,transparent);color:#ef4444}
+.wb-tbltool-sep{width:1px;height:16px;margin:0 3px;background:var(--wb-line)}

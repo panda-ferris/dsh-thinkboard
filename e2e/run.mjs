@@ -1,16 +1,28 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { writeFile, mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { resolve, join } from 'node:path'
 
 const root = process.cwd()
 await mkdir('e2e/out', { recursive: true })
 await build({ entryPoints: ['e2e/harness.jsx'], bundle: true, outfile: 'e2e/out/bundle.js', format: 'iife', jsx: 'transform', loader: { '.css': 'text' }, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'error' })
 await writeFile('e2e/out/index.html', '<!doctype html><meta charset="utf-8"><body style="margin:0"><div id="root"></div><script src="bundle.js"></script>')
 
-const port = 9444
-const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, '--user-data-dir=/tmp/wb-chrome', '--window-size=1200,800', 'about:blank'], { stdio: 'ignore' })
+// 每次运行使用独立的调试端口和临时浏览器用户目录:
+// 连续两次运行时,上一个 Chrome 可能还在退出,共用端口/用户目录会让新旧实例互相干扰(曾表现为第二次运行出现一批偶发失败)。
+const pickPort = async () => {
+  for (let i = 0; i < 40; i++) {
+    const p = 9600 + Math.floor(Math.random() * 300)
+    try { await fetch(`http://127.0.0.1:${p}/json/version`, { signal: AbortSignal.timeout(300) }) } catch { return p }   // 连不上 = 端口空闲
+  }
+  throw new Error('找不到空闲的调试端口')
+}
+const port = await pickPort()
+const profileDir = mkdtempSync(join(tmpdir(), 'wb-chrome-'))
+const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, '--window-size=1200,800', 'about:blank'], { stdio: 'ignore' })
 let ws, id = 0; const pending = new Map()
 // 每条 CDP 命令 20 秒超时:页面卡死时直接报出"哪条命令没返回",而不是让整套测试无声地挂住
 const send = (method, params = {}) => new Promise((r, rej) => { const i = ++id; const to = setTimeout(() => { pending.delete(i); rej(new Error(`CDP 命令超时(20s): ${method} ${JSON.stringify(params).slice(0, 160)}`)) }, 20000); pending.set(i, (x) => { clearTimeout(to); r(x) }); ws.send(JSON.stringify({ id: i, method, params })) })
@@ -18,7 +30,15 @@ const ev = async (expr) => { const r = await send('Runtime.evaluate', { expressi
 const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
 const drag = async (x1, y1, x2, y2, steps = 8, extra = {}) => { await mouse('mousePressed', x1, y1, extra); for (let i = 1; i <= steps; i++) await mouse('mouseMoved', x1 + ((x2 - x1) * i) / steps, y1 + ((y2 - y1) * i) / steps, extra); await mouse('mouseReleased', x2, y2, extra) }
 const results = []
-const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info }); console.log(ok ? '  ✔' : '  ✖', name, info) }
+const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info }); console.log(ok ? '  ✔' : '  ✖', name, info); if (!ok) failCtx.push(name) }
+// 第一次失败时记录浏览器环境(窗口大小、焦点、是否有残留浮层),用于区分"产品问题"和"环境偶发"
+const failCtx = []
+let ctxLogged = false
+const logFailureContext = async () => {
+  if (ctxLogged || !failCtx.length) return
+  ctxLogged = true
+  try { console.log('   [现场]', JSON.stringify(await ev(`({win:[innerWidth,innerHeight],dpr:devicePixelRatio,focus:document.hasFocus(),active:(document.activeElement?.className||document.activeElement?.tagName||'').toString().slice(0,40),menu:!!document.querySelector('.wb-slash'),tbltool:!!document.querySelector('.wb-tbltool'),editing:window.__wb?.store.getState().editing,vp:window.__wb?.store.getState().viewport,errs:window.__wb?.errors})`))) } catch (e) { console.log('   [现场] 读取失败:', e.message) }
+}
 try {
   let targets
   for (let i = 0; i < 50; i++) { try { targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); break } catch { await sleep(200) } }
@@ -1948,7 +1968,12 @@ try {
     // 表格单元格里的高亮块:单元格含块级内容 → 整张表存 HTML,不丢高亮块
     await openEditor('t1'); await typeText('/table'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-table]')`)
     await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('2x2'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="t1"] .ProseMirror table')`)
-    await typeText('/高亮块'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-types]')`); await key('Enter', 'Enter', 13); await sleep(250); await typeText('单元格里的提示'); await leave()
+    // 表格一出现就立刻打字会赶在"焦点回到编辑器、选区落进第一格"之前(真人有操作延迟,脚本没有):先等这两个条件
+    await until(`(()=>{const pm=document.querySelector('[data-wb-node="t1"] .ProseMirror');if(!pm||!pm.contains(document.activeElement))return false;const s=pm.editor.state.selection;return s.$from.parent.type.name==='paragraph'&&s.$from.depth>=4})()`)
+    await typeText('/高亮块'); await until(`!!document.querySelector('.wb-slash [data-slash="callout"]')`)          // 等菜单按输入过滤完毕、"高亮块"出现并成为高亮项
+    await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-types]')`)               // 等类型列表出现
+    await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="t1"] .ProseMirror .wb-callout')`)   // 等高亮块真的插入
+    await typeText('单元格里的提示'); await leave()
     { const md = await textOf('t1'); const v = await ev(`!!document.querySelector('[data-wb-node="t1"] .wb-body td .wb-callout, [data-wb-node="t1"] .wb-body th .wb-callout')`)
       check('表格单元格里的高亮块:存盘不丢,渲染仍是高亮块', /单元格里的提示/.test(md) && v, JSON.stringify(md).slice(0, 200)) }
   }
@@ -2120,6 +2145,16 @@ try {
       const b = await first()
       await mouse('mouseMoved', b.x - 1, b.y); await sleep(100)
       check(`缩放 ${k}:悬停在列边界,光标变为 col-resize,出现手柄`, (await ev(`getComputedStyle(document.querySelector('[data-wb-node="s"] .ProseMirror')).cursor`)) === 'col-resize' && await ev(`!!document.querySelector('.column-resize-handle')`))
+      if (k === 1) {
+        const hw = await ev(`document.querySelector('.column-resize-handle').getBoundingClientRect().width`)
+        check('列宽手柄是细线(2px),不再是 4px 粗条', Math.abs(hw - 2) <= 0.5, String(hw))
+        // 变细只是视觉:离边界 5px 处仍能识别(命中范围 6px 不变)
+        await mouse('mouseMoved', b.x - 5, b.y); await sleep(100)
+        check('手柄变细后,边界左侧 4px 处悬停仍能识别为列边界(命中范围是边界两侧各约 5px)', await ev(`getComputedStyle(document.querySelector('[data-wb-node="s"] .ProseMirror')).cursor`) === 'col-resize')
+        await mouse('mouseMoved', b.x - 8, b.y); await sleep(100)
+        check('离边界 7px 处不识别(光标回到文本)', await ev(`getComputedStyle(document.querySelector('[data-wb-node="s"] .ProseMirror')).cursor`) !== 'col-resize')
+        await mouse('mouseMoved', b.x - 1, b.y); await sleep(100)
+      }
       const cardBefore = await ev(`(()=>{const c=document.querySelector('[data-wb-node="s"]').getBoundingClientRect();const cv=document.querySelector('.wb-canvas');return [c.left,c.top,cv.scrollLeft,cv.scrollTop].map((v)=>Math.round(v*10)/10)})()`)
       await drag(100, b.x - 1, b.y)
       const a = await first()
@@ -2193,6 +2228,119 @@ try {
       await drag(70, b.x - 1, b.y); await sleep(600)
       check('详情面板里也能拖拽列宽,并写回卡片', /<table>/.test(await textOf('s')) && /colwidth="\d+"/.test(await textOf('s')), (await textOf('s')).slice(0, 120)) }
   }
+  console.log('表格浮动工具条:增删行列、表头、删除表格')
+  { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
+    const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const MD = '前文\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |'
+    const open = async (text, vp = { x: 30, y: 20, k: 0.8 }) => { await reset([T('s', 100, 100, 480, 360, { title: 't', text })]); await ev(`window.__wb.store.setViewport(${JSON.stringify(vp)})`); await sleep(250); await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    const place = async (txt) => { const ok = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();const w=document.createTreeWalker(ed,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){if(n.textContent===${JSON.stringify(txt)}){const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r);return true}}return false})()`); await sleep(350); return ok }
+    const bar = () => ev(`(()=>{const b=document.querySelector('.wb-tbltool');if(!b)return null;const r=b.getBoundingClientRect();const t=document.querySelector('[data-wb-node="s"] .ProseMirror table')?.getBoundingClientRect();return {body:b.parentElement===document.body,l:r.left,t:r.top,w:r.width,h:r.height,tl:t&&t.left,tt:t&&t.top,tw:t&&t.width,tb:t&&t.bottom,side:b.dataset.side,off:[...b.querySelectorAll('button:disabled')].map(x=>x.dataset.tblAction),on:[...b.querySelectorAll('.is-on')].map(x=>x.dataset.tblAction),n:b.querySelectorAll('button').length}})()`)
+    const shape = () => ev(`(()=>{const t=document.querySelector('[data-wb-node="s"] .ProseMirror table');if(!t)return '(无表格)';return [...t.querySelectorAll('tr')].map(r=>[...r.children].map(c=>(c.tagName==='TH'?'H:':'d:')+c.textContent).join(' ')).join(' / ')})()`)
+    const click = async (a) => { const r = await ev(`(()=>{const b=document.querySelector('[data-tbl-action="${a}"]');if(!b)return null;const q=b.getBoundingClientRect();return {x:q.left+q.width/2,y:q.top+q.height/2}})()`); if (!r) return false; await mouse('mouseMoved', r.x, r.y); await sleep(50); await mouse('mousePressed', r.x, r.y); await mouse('mouseReleased', r.x, r.y); await sleep(280); return true }
+
+    // ---- 显示与隐藏 ----
+    await open(MD)
+    await place('前文'); check('光标在表格外:不显示工具条', (await bar()) === null)
+    await place('1')
+    { const b = await bar()
+      check('光标进入表格:出现工具条,渲染在 <body> 下(脱离画布 transform)', !!b && b.body === true)
+      check('工具条有 9 个按钮', b?.n === 9, String(b?.n))
+      check('工具条在表格上方(side=above),水平居中于表格', !!b && b.side === 'above' && b.t + b.h <= b.tt && Math.abs((b.l + b.w / 2) - (b.tl + b.tw / 2)) <= 2, JSON.stringify(b))
+      check('光标在正文行:全部可用', b?.off.length === 0, JSON.stringify(b?.off))
+      check('标准表格:"表头行"按钮为按下状态,"表头列"为未按下', b?.on.length === 1 && b.on[0] === 'headerRow', JSON.stringify(b?.on)) }
+    await place('a'); { const b = await bar(); check('光标在表头行:"向上插入行"被禁用,其它仍可用', !!b && b.off.length === 1 && b.off[0] === 'rowBefore', JSON.stringify(b?.off)) }
+    await place('前文'); check('光标移出表格后工具条消失', (await bar()) === null)
+    await leave()
+    check('退出编辑后工具条消失', (await bar()) === null)
+
+    // ---- 缩放与平移下的位置 ----
+    for (const vp of [{ x: 30, y: 20, k: 1 }, { x: 200, y: 120, k: 0.6 }, { x: -40, y: 10, k: 1.5 }]) {
+      await open(MD, vp); await place('1'); const b = await bar()
+      check(`视口 k=${vp.k}:工具条紧贴表格上方并居中`, !!b && Math.abs((b.l + b.w / 2) - (b.tl + b.tw / 2)) <= 2 && (b.side === 'above' ? b.tt - (b.t + b.h) <= 12 && b.tt - (b.t + b.h) >= 0 : b.t - b.tb <= 12), JSON.stringify(b))
+      check(`视口 k=${vp.k}:工具条完整在窗口内`, !!b && b.l >= 0 && b.t >= 0 && b.l + b.w <= 1200 && b.t + b.h <= 657, JSON.stringify(b))
+      await leave()
+    }
+    // 表格紧贴窗口顶部:放到下方
+    // 把画布上卡片整体平移,让表格上沿距窗口顶部约 30px(小于 工具条高 36 + 间距 8,上方放不下)
+    await open(MD.replace('前文\n\n', ''), { x: 30, y: -160, k: 1 }); await place('1')
+    { const b = await bar(); check('表格靠近窗口顶部、上方放不下:工具条改放表格下方', !!b && b.tt < b.h + 8 && b.side === 'below' && b.t >= b.tb, JSON.stringify(b)) }
+    await leave()
+
+    // ---- 各操作 ----
+    await open(MD); await place('1')
+    await click('rowAfter'); check('在下方插入行:光标所在行之后新增一个空行', (await shape()) === 'H:a H:b / d:1 d:2 / d: d: / d:3 d:4', await shape())
+    check('  …点击后仍在编辑,工具条仍在(没有被当作离开卡片)', (await ev('window.__wb.store.getState().editing')) === 's' && !!(await bar()))
+    await click('rowBefore'); check('在上方插入行', (await shape()) === 'H:a H:b / d: d: / d:1 d:2 / d: d: / d:3 d:4', await shape())
+    await click('colAfter'); check('在右侧插入列', (await shape()) === 'H:a H: H:b / d: d: d: / d:1 d: d:2 / d: d: d: / d:3 d: d:4', await shape())
+    await click('colBefore'); check('在左侧插入列', (await shape()).startsWith('H: H:a H: H:b'), await shape())
+    await leave()
+    await open(MD); await place('1')
+    await click('rowDelete'); check('删除行:删掉光标所在行,光标落到下一行', (await shape()) === 'H:a H:b / d:3 d:4', await shape())
+    await click('colDelete'); check('删除列:删掉光标所在列', (await shape()) === 'H:b / d:4', await shape())
+    await click('rowDelete'); check('只剩表头+一行时删行:表头保留', (await shape()).startsWith('H:b'), await shape())
+    await leave()
+    // 只剩一行 / 一列:删除按钮被禁用
+    await open('| a |\n| --- |\n| 1 |'); await place('1')
+    { const b = await bar(); check('只有一列:"删除列"被禁用(库不允许删最后一列)', b?.off.includes('colDelete'), JSON.stringify(b?.off)) }
+    await leave()
+    // 表头切换
+    await open(MD); await place('1')
+    await click('headerRow'); check('关闭表头行:第一行变成普通单元格', (await shape()) === 'd:a d:b / d:1 d:2 / d:3 d:4', await shape())
+    check('  …"表头行"按钮变为未按下', !(await bar()).on.includes('headerRow'))
+    await click('headerRow'); check('再点一次:恢复表头行', (await shape()).startsWith('H:a H:b'), await shape())
+    await click('headerCol'); check('开启表头列:每行第一格变为表头', (await shape()) === 'H:a H:b / H:1 d:2 / H:3 d:4', await shape())
+    check('  …"表头列"按钮变为按下', (await bar()).on.includes('headerCol'))
+    await leave()
+    check('表头列存盘:GFM 存不下表头列 → 存成 HTML,正文行的第一格是 <th>', /<table>/.test(await textOf('s')) && /<tr><th><p>1<\/p><\/th><td>/.test(await textOf('s')), (await textOf('s')).slice(0, 200))
+    { const v = await ev(`[...document.querySelectorAll('[data-wb-node="s"] .wb-body tr')].map(r=>[...r.children].map(c=>c.tagName).join(',')).join(' / ')`)
+      check('  …渲染态表头列仍在(TH 在每行第一格)', v === 'TH,TH / TH,TD / TH,TD', v) }
+    await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await leave()
+    check('  …再进入再退出:存盘内容不变(幂等)', /<tr><th><p>1<\/p><\/th><td>/.test(await textOf('s')))
+    // 关掉表头行同理:GFM 会凭空给第一行加上表头
+    await open(MD); await place('1'); await click('headerRow'); await leave()
+    check('关闭表头行后存盘:存成 HTML,第一行保持为普通单元格(不会在重新打开时被 GFM 加上表头)', /<tr><td><p>a<\/p><\/td><td><p>b<\/p><\/td><\/tr>/.test(await textOf('s')), (await textOf('s')).slice(0, 200))
+    { const v = await ev(`[...document.querySelectorAll('[data-wb-node="s"] .wb-body tr')].map(r=>[...r.children].map(c=>c.tagName).join(',')).join(' / ')`)
+      check('  …渲染态没有表头行', v === 'TD,TD / TD,TD / TD,TD', v) }
+    // 恢复成标准形态后,变回 GFM
+    await ev(`window.__wb.store.select(['s']); window.__wb.store.setEditing('s')`); await sleep(500); await place('1'); await click('headerRow'); await leave()
+    check('重新打开表头行后:变回标准 GFM', !/<table>/.test(await textOf('s')) && /\|\s*a\s*\|\s*b\s*\|/.test(await textOf('s')), await textOf('s'))
+    // 删除表格
+    await open(MD); await place('1'); await click('tableDelete')
+    check('删除表格:表格整个消失,前文保留', (await shape()) === '(无表格)' && (await ev(`document.querySelector('[data-wb-node="s"] .ProseMirror').textContent`)).includes('前文'))
+    check('  …表格删除后工具条消失', (await bar()) === null)
+    await leave(); check('  …存盘不含表格', !/\|/.test(await textOf('s')) && !/<table>/.test(await textOf('s')), await textOf('s'))
+    // 撤销
+    await open(MD); await place('1'); await click('rowAfter')
+    const mod = /Mac/i.test(await ev('navigator.platform')) ? 4 : 2
+    await key('z', 'KeyZ', 90, { modifiers: mod }); await sleep(250)
+    check('⌘Z 一步撤销一次工具条操作', (await shape()) === 'H:a H:b / d:1 d:2 / d:3 d:4', await shape())
+    await leave()
+    // 存盘:加行后的简单表格仍是 GFM
+    await open(MD); await place('1'); await click('rowAfter'); await leave()
+    check('加行后的简单表格仍存标准 GFM', !/<table>/.test(await textOf('s')) && /\|\s*1\s*\|\s*2\s*\|/.test(await textOf('s')), await textOf('s'))
+    // 与列宽共存:加列后已有列宽保留
+    await open('<table><tbody><tr><th colwidth="200"><p>a</p></th><th><p>b</p></th></tr><tr><td colwidth="200"><p>1</p></td><td><p>2</p></td></tr></tbody></table>'); await place('1'); await click('colAfter'); await leave()
+    check('与列宽共存:插入列后,已调好的列宽保留', /<th colwidth="200">/.test(await textOf('s')) && /<td colwidth="200">/.test(await textOf('s')), (await textOf('s')).slice(0, 200))
+
+    // ---- 键盘与焦点 ----
+    await open(MD); await place('1')
+    { const b = await bar(); const p0 = await ev(`(()=>{const s=getSelection();return s.anchorNode&&s.anchorNode.textContent})()`)
+      await click('rowAfter')
+      check('点击工具条按钮不会让编辑器失焦(光标仍在表格里,可继续输入)', await ev(`!!document.activeElement.closest('.ProseMirror')`)) }
+    await key('Tab', 'Tab', 9); await sleep(100)
+    check('操作后 Tab 仍在单元格间移动(焦点与键盘不受影响)', await ev(`!!document.activeElement.closest('.ProseMirror')`))
+    await leave()
+
+    // ---- 详情面板里同样可用 ----
+    await reset([T('s', 100, 100, 320, 200, { title: '详情', text: MD })]); await sleep(250)
+    await ev(`window.__wb.store.select(['s']); window.__wb.store.openDetail('s')`); await sleep(600)
+    await ev(`(()=>{const ed=document.querySelector('.wb-detail .ProseMirror');ed.focus();const w=document.createTreeWalker(ed,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode()){if(n.textContent==='1'){const r=document.createRange();r.setStart(n,1);r.collapse(true);const s=getSelection();s.removeAllRanges();s.addRange(r);break}}})()`); await sleep(400)
+    check('详情面板里光标进入表格:同样出现工具条', await ev(`!!document.querySelector('.wb-tbltool')`))
+    await click('rowAfter'); await sleep(700)
+    check('  …详情面板里点"插入行":写回卡片', /\|\s*\|\s*\|/.test(await textOf('s')), (await textOf('s')).slice(0, 120))
+    check('页面没有 React 或未捕获错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))
+  }
   console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
@@ -2264,8 +2412,14 @@ try {
   const shot = await send('Page.captureScreenshot', { format: 'png' })
   await writeFile('e2e/out/shot.png', Buffer.from(shot.result.data, 'base64'))
   check('无未处理错误', (await ev('window.__wb.errors.length')) === 0, JSON.stringify(await ev('window.__wb.errors')))
-} catch (e) { console.error('E2E 异常:', e.message); results.push({ name: 'crash', ok: false }) }
-finally { chrome.kill() }
+} catch (e) { console.error('E2E 异常:', e.message); results.push({ name: 'crash', ok: false }); failCtx.push('crash') }
+finally {
+  await logFailureContext().catch(() => {})
+  const exited = new Promise((r) => chrome.once('exit', r))
+  chrome.kill()
+  await Promise.race([exited, sleep(5000)])   // 等 Chrome 真正退出,再让出端口、删除用户目录
+  try { rmSync(profileDir, { recursive: true, force: true }) } catch { /* 清理失败不影响结果 */ }
+}
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} 通过`)
 process.exit(failed.length ? 1 : 0)

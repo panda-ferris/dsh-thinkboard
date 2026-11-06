@@ -84,6 +84,7 @@ export function apply(ctx) {
 }
 
 const ZH = {
+  'tbl.title': '表格', 'tbl.rowBefore': '在上方插入行', 'tbl.rowAfter': '在下方插入行', 'tbl.rowDelete': '删除行', 'tbl.colBefore': '在左侧插入列', 'tbl.colAfter': '在右侧插入列', 'tbl.colDelete': '删除列', 'tbl.headerRow': '表头行', 'tbl.headerCol': '表头列', 'tbl.tableDelete': '删除表格',
   'slash.callout': '高亮块', 'slash.callout.desc': '提示 / 警告等', 'slash.highlight': '高亮文字', 'slash.highlight.desc': '==文字==',
   'callout.note': '笔记 note', 'callout.abstract': '摘要 abstract', 'callout.info': '信息 info', 'callout.todo': '待办 todo', 'callout.tip': '提示 tip', 'callout.success': '成功 success', 'callout.question': '问题 question', 'callout.warning': '警告 warning', 'callout.failure': '失败 failure', 'callout.danger': '危险 danger', 'callout.bug': '缺陷 bug', 'callout.example': '示例 example', 'callout.quote': '引用 quote',
   'slash.title': '插入', 'slash.sizeHint': '行×列,如 4x3', 'slash.tableSize': '{rows} 行 × {cols} 列',
@@ -129,6 +130,7 @@ const ZH = {
   'chat.contextHeader': '白板「{board}」(id: {id})中我选中的元素:',
 }
 const EN = {
+  'tbl.title': 'Table', 'tbl.rowBefore': 'Insert row above', 'tbl.rowAfter': 'Insert row below', 'tbl.rowDelete': 'Delete row', 'tbl.colBefore': 'Insert column left', 'tbl.colAfter': 'Insert column right', 'tbl.colDelete': 'Delete column', 'tbl.headerRow': 'Header row', 'tbl.headerCol': 'Header column', 'tbl.tableDelete': 'Delete table',
   'slash.callout': 'Callout', 'slash.callout.desc': 'Tip / warning …', 'slash.highlight': 'Highlight', 'slash.highlight.desc': '==text==',
   'callout.note': 'Note', 'callout.abstract': 'Abstract', 'callout.info': 'Info', 'callout.todo': 'Todo', 'callout.tip': 'Tip', 'callout.success': 'Success', 'callout.question': 'Question', 'callout.warning': 'Warning', 'callout.failure': 'Failure', 'callout.danger': 'Danger', 'callout.bug': 'Bug', 'callout.example': 'Example', 'callout.quote': 'Quote',
   'slash.title': 'Insert', 'slash.sizeHint': 'rows×cols, e.g. 4x3', 'slash.tableSize': '{rows} rows × {cols} cols',

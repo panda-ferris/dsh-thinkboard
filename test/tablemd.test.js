@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isComplexCell, isComplexTable, tableToHtml, complexTableMarkdown, hasCustomWidths, cleanColwidth, COL_MIN, COL_MAX, draggedColWidth } from '../src/core/tablemd.js'
+import { isComplexCell, isComplexTable, tableToHtml, complexTableMarkdown, hasCustomWidths, cleanColwidth, COL_MIN, COL_MAX, draggedColWidth, hasNonStandardHeaders } from '../src/core/tablemd.js'
 
 const p = (...c) => ({ type: 'paragraph', content: c.map((t) => (typeof t === 'string' ? { type: 'text', text: t } : t)) })
 const li = (...blocks) => ({ type: 'listItem', content: blocks })
@@ -187,4 +187,32 @@ test('draggedColWidth: 夹在 [COL_MIN, COL_MAX],结果取整', () => {
 test('draggedColWidth: 缩放比例非法(0、负、NaN)按 1 处理;起点非法不返回 NaN', () => {
   for (const k of [0, -1, NaN, undefined, null]) assert.equal(draggedColWidth(150, 100, k), 250, String(k))
   assert.ok(Number.isFinite(draggedColWidth(NaN, 10, 1))); assert.ok(Number.isFinite(draggedColWidth(100, NaN, 1)))
+})
+
+test('标准形态(首行全是表头、其余全是普通单元格)→ 存 GFM', () => {
+  const t = table(row(head(p('a')), head(p('b'))), row(cell(p('1')), cell(p('2'))))
+  assert.equal(hasNonStandardHeaders(t), false); assert.equal(isComplexTable(t), false)
+})
+
+test('表头列(正文行的第一格是表头)→ 必须存 HTML,否则存盘后表头列丢失', () => {
+  const t = table(row(head(p('a')), head(p('b'))), row(head(p('1')), cell(p('2'))), row(head(p('3')), cell(p('4'))))
+  assert.equal(hasNonStandardHeaders(t), true); assert.equal(isComplexTable(t), true)
+  const html = tableToHtml(t); assert.ok(html.includes('<tr><th><p>1</p></th><td><p>2</p></td></tr>'), html)
+})
+
+test('关闭了表头行(第一行是普通单元格)→ 存 HTML,否则 GFM 会凭空给它加上表头', () => {
+  const t = table(row(cell(p('a')), cell(p('b'))), row(cell(p('1')), cell(p('2'))))
+  assert.equal(hasNonStandardHeaders(t), true); assert.equal(isComplexTable(t), true)
+  assert.ok(tableToHtml(t).includes('<tr><td><p>a</p></td><td><p>b</p></td></tr>'))
+})
+
+test('第一行只有部分是表头 → 存 HTML', () => {
+  assert.equal(hasNonStandardHeaders(table(row(head(p('a')), cell(p('b'))), row(cell(p('1')), cell(p('2'))))), true)
+})
+
+test('只有表头行、没有正文行 → 仍是标准形态', () => { assert.equal(hasNonStandardHeaders(table(row(head(p('a')), head(p('b'))))), false) })
+
+test('空表格、缺字段不抛错', () => {
+  assert.equal(hasNonStandardHeaders({ type: 'table' }), false); assert.equal(hasNonStandardHeaders(null), false)
+  assert.doesNotThrow(() => hasNonStandardHeaders({ type: 'table', content: [{ type: 'tableRow' }] }))
 })

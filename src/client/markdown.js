@@ -20,6 +20,7 @@ import { Callout } from './callout.js'
 import { ColumnWidth } from './tableresize.js'
 import { Highlight, escapeLiteralHighlight } from './highlight.js'
 import { SlashMenu } from './slashmenu.js'
+import { TableToolbar } from './tabletoolbar.js'
 import { runCommand, insertImages, pickImageFiles } from './slashcmds.js'
 
 const h = React.createElement
@@ -249,6 +250,7 @@ export function MarkdownEditor({ initial, placeholder, onCommit, autofocus = tru
   const edRef = React.useRef(null)
   const done = React.useRef(false)
   const { slashOptions, menu, handlers } = useSlash({ t, boardId, transport, edRef })
+  const [edState, setEdState] = React.useState(null)   // 编辑器在 effect 里创建;放进 state 才会触发重渲染,让工具条拿到实例
 
   React.useEffect(() => {
     setCurrentBoard(boardId ?? null)
@@ -261,6 +263,7 @@ export function MarkdownEditor({ initial, placeholder, onCommit, autofocus = tru
       editorProps: { attributes: { class: 'wb-md wb-md-edit', 'data-placeholder': placeholder || '' }, ...handlers },
     })
     edRef.current = ed
+    setEdState(ed)
     if (focusRef) focusRef.current = () => ed.commands.focus('start')
     const nodeEl = () => hostRef.current?.closest('[data-wb-node]')
     const finish = () => {
@@ -299,7 +302,7 @@ export function MarkdownEditor({ initial, placeholder, onCommit, autofocus = tru
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return h(React.Fragment, null, h('div', { ref: hostRef, className: 'wb-md-host', 'data-wb-scroll': true, onPointerDown: (e) => e.stopPropagation() }), menu)
+  return h(React.Fragment, null, h('div', { ref: hostRef, className: 'wb-md-host', 'data-wb-scroll': true, onPointerDown: (e) => e.stopPropagation() }), menu, edState ? h(TableToolbar, { editor: edState, t }) : null)
 }
 
 /**
@@ -367,6 +370,7 @@ export function LiveMarkdownEditor({ value, placeholder, onChange, delay = 400, 
   const hostRef = React.useRef(null)
   const edRef = React.useRef(null)
   const { slashOptions, menu, handlers } = useSlash({ t, boardId, transport, edRef })
+  const [edState, setEdState] = React.useState(null)
   const timer = React.useRef(null)
   const lastSent = React.useRef(value || '')
   const cb = React.useRef(onChange)
@@ -383,6 +387,7 @@ export function LiveMarkdownEditor({ value, placeholder, onChange, delay = 400, 
       editorProps: { attributes: { class: 'wb-md wb-md-edit wb-md-detail', 'data-placeholder': placeholder || '' }, ...handlers },
     })
     edRef.current = ed
+    setEdState(ed)
     const flush = () => {
       clearTimeout(timer.current)
       timer.current = null
@@ -407,5 +412,5 @@ export function LiveMarkdownEditor({ value, placeholder, onChange, delay = 400, 
     ed.commands.setContent(v, { contentType: 'markdown', emitUpdate: false })
   }, [value])
 
-  return h(React.Fragment, null, h('div', { ref: hostRef, className: 'wb-md-host wb-detail-editor', 'data-wb-scroll': true }), menu)
+  return h(React.Fragment, null, h('div', { ref: hostRef, className: 'wb-md-host wb-detail-editor', 'data-wb-scroll': true }), menu, edState ? h(TableToolbar, { editor: edState, t }) : null)
 }

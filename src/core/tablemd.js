@@ -27,7 +27,22 @@ export function isComplexCell(cell) {
 }
 
 export function isComplexTable(table) {
-  return (table?.content ?? []).some((row) => (row.content ?? []).some((c) => isComplexCell(c) || !!cleanColwidth(c.attrs?.colwidth)))
+  return hasNonStandardHeaders(table) || (table?.content ?? []).some((row) => (row.content ?? []).some((c) => isComplexCell(c) || !!cleanColwidth(c.attrs?.colwidth)))
+}
+
+/**
+ * 表头是否偏离 GFM 的唯一形态:"第一行是表头、其余行全是普通单元格"。
+ * GFM 只能表达这一种;有"表头列"(正文行里出现表头单元格)、第一行混有普通单元格、
+ * 或没有表头行,存成 GFM 都会丢掉这些信息 → 必须存成 HTML。
+ *   - 没有任何表头(全是普通单元格)也算:GFM 表格固定带表头行,存成 GFM 会凭空多出一行表头。
+ */
+export function hasNonStandardHeaders(table) {
+  const rows = table?.content ?? []
+  if (!rows.length) return false
+  const isHead = (c) => c.type === 'tableHeader'
+  const first = rows[0].content ?? []
+  if (first.length && !first.every(isHead)) return true
+  return rows.slice(1).some((r) => (r.content ?? []).some(isHead))
 }
 
 /** 是否有手动调整过的列宽(GFM 表格没有地方存宽度,有的话整张表要存成 HTML)。 */
