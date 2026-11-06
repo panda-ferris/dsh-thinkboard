@@ -1,6 +1,7 @@
 // slash 菜单:悬浮在光标下方的命令列表。展示与键盘交互在这里,命令的具体执行由调用方(编辑器)提供。
 
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { filterCommands, moveIndex, parseTableSize, clampTableSize, TABLE_DEFAULT, TABLE_MAX_ROWS, TABLE_MAX_COLS } from '../core/slash.js'
 
 const h = React.createElement
@@ -54,6 +55,35 @@ function TableSizePicker({ t, onPick, onCancel, onRefocus }) {
 }
 
 /**
+ * 菜单位置。
+ *
+ * 朝向(放光标下方还是上方)在菜单"打开的那一刻"决定一次,之后整个会话保持不变:
+ *   - 按"最大可能高度"(菜单的 max-height,而不是当前候选数对应的高度)判断下方放不放得下。
+ *   - 否则输入过滤时候选数变化 → 高度变化 → 朝向来回翻转,菜单上下乱跳。
+ * 朝向为"上方"时,菜单用 bottom 对齐光标上沿(而不是 top),这样高度变化只会向上伸缩,不会离开光标。
+ * 横向:贴着光标,不超出视口。
+ */
+const MENU_MAX_HEIGHT = 320 + 14   // 与样式里的 max-height + padding 保持一致
+function useClampedPosition(anchor) {
+  const ref = React.useRef(null)
+  const dir = React.useRef(null)                       // 'down' | 'up',首次渲染后固定
+  const [pos, setPos] = React.useState({ left: anchor.left, top: anchor.top, bottom: null })
+  React.useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const w = el.offsetWidth, vw = window.innerWidth, vh = window.innerHeight, gap = 8
+    const left = Math.max(gap, Math.min(anchor.left, vw - w - gap))
+    if (dir.current === null) dir.current = anchor.top + MENU_MAX_HEIGHT > vh - gap ? 'up' : 'down'
+    const next = dir.current === 'down'
+      ? { left, top: anchor.top, bottom: null }
+      // 向上展开:菜单下沿固定在光标上沿之上 6px;高度变化只向上伸缩
+      : { left, top: null, bottom: Math.max(gap, vh - (anchor.caretTop ?? anchor.top) + 6) }
+    setPos((p) => (p.left === next.left && p.top === next.top && p.bottom === next.bottom ? p : next))
+  })
+  return { ref, ...pos }
+}
+
+/**
  * props:
  *   query     —— "/" 之后用户输入的文字
  *   anchor    —— { left, top } 菜单位置(相对视口)
@@ -82,9 +112,19 @@ export function SlashMenu({ query, anchor, t, onRun, onClose, keysRef, onRefocus
     return () => { keysRef.current = null }
   })
   const listRef = React.useRef(null)
-  React.useEffect(() => { listRef.current?.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' }) }, [index])
+  // 让高亮项保持在菜单列表可见范围内。只改菜单自己的 scrollTop——不能用 scrollIntoView:
+  // 它会沿祖先链滚动所有可滚动容器(包括白板画布),导致整张卡片跳动。
+  React.useEffect(() => {
+    const list = listRef.current, el = list?.querySelector('.is-active')
+    if (!list || !el) return
+    const top = el.offsetTop, bottom = top + el.offsetHeight
+    if (top < list.scrollTop) list.scrollTop = top
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
+  }, [index])
+  // 所有 hook 必须在任何提前返回之前调用,否则两次渲染的 hook 数量不一致,React 会报错 #300 并卸载整棵树
+  const pos = useClampedPosition(anchor)
   if (!items.length && !stage) return null
-  return h('div', { className: 'wb-slash', role: 'listbox', 'aria-label': t('slash.title'), style: { left: anchor.left, top: anchor.top }, 'data-wb-ui': true,
+  return createPortal(h('div', { ref: pos.ref, className: 'wb-slash', role: 'listbox', 'aria-label': t('slash.title'), style: pos.top != null ? { left: pos.left, top: pos.top } : { left: pos.left, bottom: pos.bottom }, 'data-wb-ui': true, 'data-wb-slash': true,
     onMouseDown: (e) => e.preventDefault() }, // 点菜单不要让编辑器失去焦点
     stage === 'table'
       ? h(TableSizePicker, { t, onRefocus, onCancel: () => { setStage(null); onRefocus?.() }, onPick: (size) => onRun('table', size) })
@@ -93,5 +133,5 @@ export function SlashMenu({ query, anchor, t, onRun, onClose, keysRef, onRefocus
           onMouseEnter: () => setIndex(i), onClick: () => run(c) },
           h('span', { className: 'wb-slash-icon' }, (ICONS[c.icon] || ICONS.divider)()),
           h('span', { className: 'wb-slash-name' }, t('slash.' + c.id)),
-          h('span', { className: 'wb-slash-desc' }, t('slash.' + c.id + '.desc'))))))
+          h('span', { className: 'wb-slash-desc' }, t('slash.' + c.id + '.desc')))))), document.body)
 }

@@ -254,8 +254,10 @@ export function MarkdownEditor({ initial, placeholder, onCommit, autofocus = tru
     // 焦点只在"这张卡片内部"(标题输入框 ↔ 正文)切换时不算离开;离开整张卡片才提交
     const onFocusOut = (e) => {
       const next = e.relatedTarget
-      if (next && nodeEl()?.contains(next)) return
-      setTimeout(() => { if (!nodeEl()?.contains(document.activeElement)) finish() }, 0)
+      // slash 菜单(渲染在 body 下以脱离画布的 transform)算作卡片的一部分,焦点在其中不是"离开"
+      const inside = (n) => !!n && (nodeEl()?.contains(n) || !!n.closest?.('[data-wb-slash]'))
+      if (inside(next)) return
+      setTimeout(() => { if (!inside(document.activeElement)) finish() }, 0)
     }
     const el = nodeEl()
     el?.addEventListener('focusout', onFocusOut)
@@ -266,7 +268,7 @@ export function MarkdownEditor({ initial, placeholder, onCommit, autofocus = tru
       // 这次按键已被 slash 菜单消费(例如 Esc 用来关菜单):不要再当作"提交并退出编辑"
       if (e.__wbSlashHandled) return
       // 来自菜单里的输入框(表格尺寸):按键属于菜单,不是编辑器正文
-      if (e.target?.closest?.('.wb-slash')) return
+      if (e.target?.closest?.('[data-wb-slash]')) return
       if (e.key === 'Escape') { e.preventDefault(); finish() }
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); finish() }
     })
@@ -299,7 +301,7 @@ function useSlash({ t, boardId, transport, edRef }) {
     onChange: (st, view) => {
       if (!st) { if (stateRef.current) setState(null); return }
       const c = view.coordsAtPos(st.to)
-      setState({ ...st, left: c.left, top: c.bottom + 6 })
+      setState({ ...st, left: c.left, top: c.bottom + 6, caretTop: c.top })
     },
     handleKey: (e) => (keysRef.current ? keysRef.current(e) : false),
   }), [])
@@ -323,7 +325,7 @@ function useSlash({ t, boardId, transport, edRef }) {
     runCommand(ed, st, id, extra)
   }, [upload, urlFor])
 
-  const menu = state ? h(SlashMenu, { query: state.query, anchor: { left: state.left, top: state.top }, t, onRun, onClose: close, keysRef, onRefocus: () => edRef.current?.commands.focus() }) : null
+  const menu = state ? h(SlashMenu, { query: state.query, anchor: { left: state.left, top: state.top, caretTop: state.caretTop }, t, onRun, onClose: close, keysRef, onRefocus: () => edRef.current?.commands.focus() }) : null
   // 粘贴/拖入图片文件:直接上传并插入(不依赖 slash)
   const handlers = React.useMemo(() => ({
     handlePaste: (_view, e) => {

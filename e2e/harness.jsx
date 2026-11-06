@@ -27,6 +27,10 @@ const mkPng = (w, h, color) => { const c = document.createElement('canvas'); c.w
 const TALL = mkPng(100, 300, '#d33')
 const WIDE = mkPng(400, 200, '#33d')
 const errors = []
+// React 渲染错误只会写到 console.error,未捕获异常只会触发 error 事件——两者都计入"页面错误",否则页面崩了测试也看不出来
+window.addEventListener('error', (e) => errors.push('uncaught: ' + (e.message || e.error)))
+window.addEventListener('unhandledrejection', (e) => errors.push('unhandled rejection: ' + (e.reason?.message || e.reason)))
+{ const orig = console.error; console.error = (...a) => { const m = a.map((x) => (x && x.message) || String(x)).join(' '); if (/React error|Minified React|The above error occurred|Warning: .*(hook|Hook)/i.test(m)) errors.push('react: ' + m.slice(0, 200)); orig.apply(console, a) } }
 configureAssetUrls((b, f) => transport.assetUrl(b, f))
 const store = createStore({ transport, onError: (e) => errors.push(String(e.message || e)) })
 const t = (k) => k

@@ -345,7 +345,7 @@
   background:var(--dsw-alias-bg-overlay);border:1px solid var(--wb-line);box-shadow:0 4px 16px rgba(0,0,0,.2);pointer-events:none}
 
 /* ---------- slash 菜单 ---------- */
-.wb-slash{position:fixed;z-index:60;min-width:260px;max-width:340px;max-height:320px;overflow:hidden;display:flex;flex-direction:column;padding:6px;
+.wb-slash{position:fixed;z-index:60;min-width:260px;max-width:340px;max-height:334px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;padding:6px;
   background:var(--dsw-alias-bg-overlay);border:1px solid var(--wb-line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.28)}
 .wb-slash-list{overflow-y:auto;display:flex;flex-direction:column;gap:1px}
 .wb-slash-item{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:7px;cursor:pointer;color:var(--dsw-alias-label-primary)}

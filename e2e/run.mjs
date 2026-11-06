@@ -1751,6 +1751,82 @@ try {
     check('单元格里有列表的表格存成 HTML(不丢列表)', /<table>/.test(await textOf('sl13')) && /<ul>/.test(await textOf('sl13')))
   }
 
+  console.log('slash 菜单在白板画布里:平移 / 缩放下不漂移,卡片不跳动')
+  { const key = (k, code, vk) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk })
+    const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
+    const snap = () => ev(`(()=>{const m=document.querySelector('.wb-slash');const c=document.querySelector('[data-wb-node="dr"]').getBoundingClientRect();const sel=getSelection();const r=sel.rangeCount?sel.getRangeAt(0).getBoundingClientRect():null;const cv=document.querySelector('.wb-canvas');return {card:{x:Math.round(c.left*10)/10,y:Math.round(c.top*10)/10},caret:r?{x:r.left,top:r.top,bottom:r.bottom}:null,menu:m?(()=>{const b=m.getBoundingClientRect();return {x:b.left,y:b.top,w:b.width,h:b.height}})():null,canvasScroll:[cv.scrollLeft,cv.scrollTop],parentIsBody:m?m.parentElement===document.body:null}})()`)
+    for (const vp of [{ x: 0, y: 0, k: 1 }, { x: 200, y: 120, k: 0.8 }, { x: -50, y: 40, k: 1.5 }, { x: 60, y: 30, k: 0.4 }]) {
+      const tag = `视口 x=${vp.x} y=${vp.y} k=${vp.k}`
+      await reset([T('dr', 300, 200, 420, 300, { title: 't', text: '' })]); await ev(`window.__wb.store.setViewport(${JSON.stringify(vp)})`); await sleep(250)
+      await ev(`window.__wb.store.select(['dr']); window.__wb.store.setEditing('dr')`); await sleep(500)
+      await ev(`document.querySelector('[data-wb-node="dr"] .ProseMirror').focus()`); await sleep(100)
+      const before = await snap()
+      await typeText('/'); const s1 = await snap()
+      check(`${tag}:菜单出现在 <body> 下(脱离画布的 transform)`, s1.parentIsBody === true)
+      // 视口矮时菜单朝上是正确行为:要求"紧贴光标、不遮挡光标所在行",而不是死守在下方
+      check(`${tag}:菜单紧贴光标(横向对齐,纵向在光标上/下沿附近,不遮挡光标行)`, !!s1.menu && !!s1.caret && Math.abs(s1.menu.x - s1.caret.x) <= 2 && ((s1.menu.y >= s1.caret.bottom && s1.menu.y - s1.caret.bottom <= 12) || (s1.menu.y + s1.menu.h <= s1.caret.top && s1.caret.top - (s1.menu.y + s1.menu.h) <= 12)), JSON.stringify({ caret: s1.caret, menu: s1.menu }))
+      check(`${tag}:弹出菜单时卡片没有移动`, s1.card.x === before.card.x && s1.card.y === before.card.y, JSON.stringify({ before: before.card, after: s1.card }))
+      check(`${tag}:弹出菜单时画布没有被滚动`, s1.canvasScroll[0] === 0 && s1.canvasScroll[1] === 0, JSON.stringify(s1.canvasScroll))
+      for (let i = 0; i < 8; i++) { await key('ArrowDown', 'ArrowDown', 40); await sleep(50) }
+      const s2 = await snap()
+      check(`${tag}:连按 ↓ 切换高亮时卡片位置不变`, s2.card.x === before.card.x && s2.card.y === before.card.y, JSON.stringify({ before: before.card, after: s2.card }))
+      check(`${tag}:连按 ↓ 时画布没有被滚动`, s2.canvasScroll[0] === 0 && s2.canvasScroll[1] === 0, JSON.stringify(s2.canvasScroll))
+      check(`${tag}:连按 ↓ 时菜单位置不漂移`, !!s2.menu && Math.abs(s2.menu.x - s1.menu.x) < 1 && Math.abs(s2.menu.y - s1.menu.y) < 1, JSON.stringify({ a: s1.menu, b: s2.menu }))
+      check(`${tag}:高亮项始终在菜单可见范围内`, await ev(`(()=>{const l=document.querySelector('.wb-slash-list');const a=l.querySelector('.is-active');const lr=l.getBoundingClientRect(),ar=a.getBoundingClientRect();return ar.top>=lr.top-1&&ar.bottom<=lr.bottom+1})()`))
+      await key('Escape', 'Escape', 27); await sleep(120)
+      await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
+    }
+    // 输入过滤时(候选数变化):朝向不翻转,菜单贴着光标一侧伸缩,不上下乱跳
+    for (const [label, vp] of [['朝下', { x: 0, y: 0, k: 1, top: 40 }], ['朝上', { x: 0, y: 0, k: 1, top: 330 }]]) {
+      await reset([T('dr', 300, vp.top, 420, 300, { title: 't', text: '' })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250)
+      await ev(`window.__wb.store.select(['dr']); window.__wb.store.setEditing('dr')`); await sleep(500)
+      await ev(`document.querySelector('[data-wb-node="dr"] .ProseMirror').focus()`); await typeText('/'); await sleep(120)
+      const dirOf = (sn) => (sn.menu.y >= sn.caret.bottom - 1 ? 'down' : 'up')
+      const a = await snap(); const d0 = dirOf(a)
+      const gapOf = (sn) => (d0 === 'down' ? sn.menu.y - sn.caret.bottom : sn.caret.top - (sn.menu.y + sn.menu.h))
+      const dirs = [d0], gaps = [gapOf(a)]
+      for (const ch of ['h', '2']) { await typeText(ch); await sleep(120); const sn = await snap(); dirs.push(dirOf(sn)); gaps.push(gapOf(sn)) }
+      await key('Backspace', 'Backspace', 8); await sleep(120); { const sn = await snap(); dirs.push(dirOf(sn)); gaps.push(gapOf(sn)) }
+      await key('Backspace', 'Backspace', 8); await sleep(120); { const sn = await snap(); dirs.push(dirOf(sn)); gaps.push(gapOf(sn)) }
+      check(`过滤输入(${label}):朝向全程不变`, dirs.every((d) => d === d0), JSON.stringify(dirs))
+      check(`过滤输入(${label}):菜单始终贴着光标(间距恒定,不随候选数变化)`, Math.max(...gaps) - Math.min(...gaps) <= 1, JSON.stringify(gaps))
+      await key('Escape', 'Escape', 27); await sleep(100)
+      await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
+    }
+    // 窗口很矮:菜单放不下时翻到光标上方,仍完整显示在窗口内
+    await reset([T('dr', 300, 400, 420, 300, { title: 't', text: '' })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250)
+    await ev(`window.__wb.store.select(['dr']); window.__wb.store.setEditing('dr')`); await sleep(500)
+    await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 520, deviceScaleFactor: 1, mobile: false }); await sleep(300)
+    await ev(`document.querySelector('[data-wb-node="dr"] .ProseMirror').focus()`); await typeText('/'); await sleep(150)
+    { const m = await ev(`(()=>{const m=document.querySelector('.wb-slash');if(!m)return null;const b=m.getBoundingClientRect();const sel=getSelection();const r=sel.getRangeAt(0).getBoundingClientRect();return {top:b.top,bottom:b.bottom,h:innerHeight,caretTop:r.top,caretBottom:r.bottom}})()`)
+      check('光标靠近窗口底部:菜单翻到光标上方,完整显示在窗口内', !!m && m.top >= 0 && m.bottom <= m.h && m.bottom <= m.caretTop, JSON.stringify(m)) }
+    await key('Escape', 'Escape', 27); await send('Emulation.clearDeviceMetricsOverride'); await sleep(200)
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
+    // 窗口很窄:菜单不超出右边界
+    await reset([T('dr', 700, 200, 420, 300, { title: 't', text: '' })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250)
+    await ev(`window.__wb.store.select(['dr']); window.__wb.store.setEditing('dr')`); await sleep(500)
+    await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 800, deviceScaleFactor: 1, mobile: false }); await sleep(300)
+    await ev(`document.querySelector('[data-wb-node="dr"] .ProseMirror').focus()`); await typeText('/'); await sleep(150)
+    check('光标靠近窗口右侧:菜单不超出右边界', await ev(`(()=>{const m=document.querySelector('.wb-slash');if(!m)return false;const b=m.getBoundingClientRect();return b.left>=0&&b.right<=innerWidth})()`))
+    await key('Escape', 'Escape', 27); await send('Emulation.clearDeviceMetricsOverride'); await sleep(200)
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
+    // 点菜单本身不应结束卡片编辑(菜单在 body 下,不在卡片 DOM 里)
+    await reset([T('dr', 300, 200, 420, 300, { title: 't', text: '' })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250)
+    await ev(`window.__wb.store.select(['dr']); window.__wb.store.setEditing('dr')`); await sleep(500)
+    await ev(`document.querySelector('[data-wb-node="dr"] .ProseMirror').focus()`); await typeText('/无序'); await sleep(150)
+    { const c = await ev(`(()=>{const e=document.querySelector('.wb-slash-item').getBoundingClientRect();return {x:e.left+e.width/2,y:e.top+e.height/2}})()`)
+      await mouse('mouseMoved', c.x, c.y); await sleep(60); await mouse('mousePressed', c.x, c.y); await mouse('mouseReleased', c.x, c.y); await sleep(300) }
+    check('用鼠标点菜单项:执行命令,且仍在编辑状态', (await ev('window.__wb.store.getState().editing')) === 'dr' && await ev(`!!document.querySelector('[data-wb-node="dr"] .ProseMirror ul')`))
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
+    // 表格尺寸选择也在 body 下:输入框拿焦点不应结束编辑
+    await reset([T('dr', 300, 200, 420, 300, { title: 't', text: '' })]); await ev(`window.__wb.store.setViewport({x:150,y:90,k:0.7})`); await sleep(250)
+    await ev(`window.__wb.store.select(['dr']); window.__wb.store.setEditing('dr')`); await sleep(500)
+    await ev(`document.querySelector('[data-wb-node="dr"] .ProseMirror').focus()`); await typeText('/table'); await key('Enter', 'Enter', 13); await sleep(250)
+    check('缩放画布里选表格:尺寸选择出现且仍在编辑', (await ev('window.__wb.store.getState().editing')) === 'dr' && await ev(`!!document.querySelector('[data-wb-slash-table]')`))
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('3x2'); await key('Enter', 'Enter', 13); await sleep(400)
+    check('缩放画布里按尺寸插入表格:3 行 2 列', await ev(`(()=>{const t=document.querySelector('[data-wb-node="dr"] .ProseMirror table');return !!t&&t.querySelectorAll('tr').length===3&&t.querySelector('tr').children.length===2})()`))
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
+  }
   console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
