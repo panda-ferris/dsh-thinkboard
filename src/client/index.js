@@ -84,6 +84,8 @@ export function apply(ctx) {
 }
 
 const ZH = {
+  'slash.callout': '高亮块', 'slash.callout.desc': '提示 / 警告等', 'slash.highlight': '高亮文字', 'slash.highlight.desc': '==文字==',
+  'callout.note': '笔记 note', 'callout.abstract': '摘要 abstract', 'callout.info': '信息 info', 'callout.todo': '待办 todo', 'callout.tip': '提示 tip', 'callout.success': '成功 success', 'callout.question': '问题 question', 'callout.warning': '警告 warning', 'callout.failure': '失败 failure', 'callout.danger': '危险 danger', 'callout.bug': '缺陷 bug', 'callout.example': '示例 example', 'callout.quote': '引用 quote',
   'slash.title': '插入', 'slash.sizeHint': '行×列,如 4x3', 'slash.tableSize': '{rows} 行 × {cols} 列',
   'slash.table': '表格', 'slash.table.desc': '选择行列数', 'slash.image': '图片', 'slash.image.desc': '上传并插入',
   'slash.h1': '一级标题', 'slash.h1.desc': '大标题', 'slash.h2': '二级标题', 'slash.h2.desc': '中标题', 'slash.h3': '三级标题', 'slash.h3.desc': '小标题',
@@ -127,6 +129,8 @@ const ZH = {
   'chat.contextHeader': '白板「{board}」(id: {id})中我选中的元素:',
 }
 const EN = {
+  'slash.callout': 'Callout', 'slash.callout.desc': 'Tip / warning …', 'slash.highlight': 'Highlight', 'slash.highlight.desc': '==text==',
+  'callout.note': 'Note', 'callout.abstract': 'Abstract', 'callout.info': 'Info', 'callout.todo': 'Todo', 'callout.tip': 'Tip', 'callout.success': 'Success', 'callout.question': 'Question', 'callout.warning': 'Warning', 'callout.failure': 'Failure', 'callout.danger': 'Danger', 'callout.bug': 'Bug', 'callout.example': 'Example', 'callout.quote': 'Quote',
   'slash.title': 'Insert', 'slash.sizeHint': 'rows×cols, e.g. 4x3', 'slash.tableSize': '{rows} rows × {cols} cols',
   'slash.table': 'Table', 'slash.table.desc': 'Pick rows and columns', 'slash.image': 'Image', 'slash.image.desc': 'Upload and insert',
   'slash.h1': 'Heading 1', 'slash.h1.desc': 'Large', 'slash.h2': 'Heading 2', 'slash.h2.desc': 'Medium', 'slash.h3': 'Heading 3', 'slash.h3.desc': 'Small',

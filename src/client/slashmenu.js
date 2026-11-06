@@ -3,6 +3,7 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
 import { filterCommands, moveIndex, parseTableSize, clampTableSize, TABLE_DEFAULT, TABLE_MAX_ROWS, TABLE_MAX_COLS } from '../core/slash.js'
+import { CALLOUT_TYPES } from '../core/callout.js'
 
 const h = React.createElement
 
@@ -19,6 +20,8 @@ const ICONS = {
   quote: () => I([h('path', { key: 1, d: 'M3 3.5v9M6.5 5h6.5M6.5 8h6.5M6.5 11h4' })]),
   code: () => I([h('path', { key: 1, d: 'M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5' })]),
   divider: () => I([h('path', { key: 1, d: 'M2 8h12' })]),
+  callout: () => I([h('rect', { key: 1, x: 2, y: 3, width: 12, height: 10, rx: 2 }), h('path', { key: 2, d: 'M5 6.500h6M5 9.500h4' })]),
+  highlight: () => I([h('path', { key: 1, d: 'M3 12.500h10M5 10l5.500-5.500 2 2L7 12H5z' })]),
 }
 
 /** 表格尺寸选择:鼠标划过网格选行列,或在输入框里写 "4x3";回车确认。 */
@@ -28,7 +31,7 @@ function TableSizePicker({ t, onPick, onCancel, onRefocus }) {
   const parsed = parseTableSize(text)
   const shown = parsed ?? hover
   const ref = React.useRef(null)
-  React.useEffect(() => { ref.current?.focus() }, [])
+  React.useEffect(() => { ref.current?.focus({ preventScroll: true }) }, [])
 
   const rows = Math.min(8, TABLE_MAX_ROWS), cols = Math.min(8, TABLE_MAX_COLS)
   return h('div', { className: 'wb-slash-table', 'data-wb-slash-table': true },
@@ -84,6 +87,43 @@ function useClampedPosition(anchor) {
 }
 
 /**
+ * 让高亮项保持在列表可见范围内。只改列表自己的 scrollTop——不能用 scrollIntoView:
+ * 它会沿祖先链滚动所有可滚动容器(包括白板画布),导致整张卡片跳动。
+ */
+function useKeepActiveVisible(listRef, index) {
+  React.useEffect(() => {
+    const list = listRef.current, el = list?.querySelector('.is-active')
+    if (!list || !el) return
+    const top = el.offsetTop, bottom = top + el.offsetHeight
+    if (top < list.scrollTop) list.scrollTop = top
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
+  }, [index])
+}
+
+/** callout 类型选择:列出内置类型,带颜色小点;键盘 ↑↓ / Enter,Esc 回到命令列表。 */
+function CalloutTypePicker({ t, onPick, onCancel }) {
+  const [index, setIndex] = React.useState(0)
+  const ref = React.useRef(null)
+  React.useEffect(() => { ref.current?.focus({ preventScroll: true }) }, [])
+  useKeepActiveVisible(ref, index)
+  const COLOR = { blue: '#3b82f6', teal: '#14b8a6', green: '#22c55e', yellow: '#eab308', orange: '#f97316', red: '#ef4444', purple: '#a855f7', gray: '#8b8b93' }
+  return h('div', { ref, className: 'wb-slash-list wb-slash-types', tabIndex: -1, 'data-wb-slash-types': true,
+    onKeyDown: (e) => {
+      e.stopPropagation()
+      if (e.nativeEvent.isComposing) return
+      if (e.key === 'ArrowDown') { e.preventDefault(); setIndex((i) => moveIndex(i, 1, CALLOUT_TYPES.length)) }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setIndex((i) => moveIndex(i, -1, CALLOUT_TYPES.length)) }
+      else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); onPick(CALLOUT_TYPES[index].id) }
+      else if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+    } },
+    CALLOUT_TYPES.map((c, i) => h('div', { key: c.id, role: 'option', 'aria-selected': i === index, 'data-callout-type': c.id, className: 'wb-slash-item' + (i === index ? ' is-active' : ''),
+      onMouseEnter: () => setIndex(i), onMouseDown: (e) => { e.preventDefault(); onPick(c.id) } },
+      h('span', { className: 'wb-slash-icon' }, h('span', { className: 'wb-slash-dot', style: { background: COLOR[c.color] } })),
+      h('span', { className: 'wb-slash-name' }, t('callout.' + c.id)),
+      h('span', { className: 'wb-slash-desc' }, c.aliases.slice(0, 2).join(' · ')))))
+}
+
+/**
  * props:
  *   query     —— "/" 之后用户输入的文字
  *   anchor    —— { left, top } 菜单位置(相对视口)
@@ -98,7 +138,7 @@ export function SlashMenu({ query, anchor, t, onRun, onClose, keysRef, onRefocus
   const [stage, setStage] = React.useState(null) // null | 'table'
   React.useEffect(() => { setIndex(0) }, [query])
   React.useEffect(() => { if (!stage && query !== '' && items.length === 0) onClose() }, [items.length, query, stage])
-  const run = (c) => { if (c.id === 'table') setStage('table'); else onRun(c.id) }
+  const run = (c) => { if (c.id === 'table') setStage('table'); else if (c.id === 'callout') setStage('callout'); else onRun(c.id) }
   // 键盘:上下选择、回车执行、Esc 关闭;表格尺寸阶段由它自己的输入框接管
   React.useEffect(() => {
     keysRef.current = (e) => {
@@ -112,15 +152,7 @@ export function SlashMenu({ query, anchor, t, onRun, onClose, keysRef, onRefocus
     return () => { keysRef.current = null }
   })
   const listRef = React.useRef(null)
-  // 让高亮项保持在菜单列表可见范围内。只改菜单自己的 scrollTop——不能用 scrollIntoView:
-  // 它会沿祖先链滚动所有可滚动容器(包括白板画布),导致整张卡片跳动。
-  React.useEffect(() => {
-    const list = listRef.current, el = list?.querySelector('.is-active')
-    if (!list || !el) return
-    const top = el.offsetTop, bottom = top + el.offsetHeight
-    if (top < list.scrollTop) list.scrollTop = top
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
-  }, [index])
+  useKeepActiveVisible(listRef, index)
   // 所有 hook 必须在任何提前返回之前调用,否则两次渲染的 hook 数量不一致,React 会报错 #300 并卸载整棵树
   const pos = useClampedPosition(anchor)
   if (!items.length && !stage) return null
@@ -128,7 +160,9 @@ export function SlashMenu({ query, anchor, t, onRun, onClose, keysRef, onRefocus
     onMouseDown: (e) => e.preventDefault() }, // 点菜单不要让编辑器失去焦点
     stage === 'table'
       ? h(TableSizePicker, { t, onRefocus, onCancel: () => { setStage(null); onRefocus?.() }, onPick: (size) => onRun('table', size) })
-      : h('div', { ref: listRef, className: 'wb-slash-list' },
+      : stage === 'callout'
+        ? h(CalloutTypePicker, { t, onCancel: () => { setStage(null); onRefocus?.() }, onPick: (type) => { onRefocus?.(); onRun('callout', { type }) } })
+        : h('div', { ref: listRef, className: 'wb-slash-list' },
         items.map((c, i) => h('div', { key: c.id, role: 'option', 'aria-selected': i === index, 'data-slash': c.id, className: 'wb-slash-item' + (i === index ? ' is-active' : ''),
           onMouseEnter: () => setIndex(i), onClick: () => run(c) },
           h('span', { className: 'wb-slash-icon' }, (ICONS[c.icon] || ICONS.divider)()),

@@ -98,3 +98,16 @@ test('mapAssetUrls: 只替换合法的 assets/ 路径,其它原样', () => {
 })
 
 test('mapAssetUrls: 没有图片、空输入不出错', () => { assert.equal(mapAssetUrls('<p>x</p>', () => 'u'), '<p>x</p>'); assert.equal(mapAssetUrls('', () => 'u'), '') })
+
+test('callout / highlight 命令存在,中英文关键词都能命中', () => {
+  assert.ok(COMMANDS.some((c) => c.id === 'callout') && COMMANDS.some((c) => c.id === 'highlight'))
+  for (const q of ['高亮块', '提示', '警告', 'callout', 'warning', 'tip']) assert.ok(filterCommands(q).map((c) => c.id).includes('callout'), q)
+  for (const q of ['高亮', 'highlight', 'mark']) assert.ok(filterCommands(q).map((c) => c.id).includes('highlight'), q)
+})
+
+test('"高亮"同时命中高亮块与高亮文字,且高亮块在前(前缀匹配 + 命令顺序)', () => {
+  const ids = filterCommands('高亮').map((c) => c.id)
+  assert.deepEqual(ids.slice(0, 2), ['callout', 'highlight'])
+})
+
+test('callout 需要第二步选择类型(needsInput)', () => { assert.equal(COMMANDS.find((c) => c.id === 'callout').needsInput, true) })

@@ -1827,6 +1827,131 @@ try {
     check('缩放画布里按尺寸插入表格:3 行 2 列', await ev(`(()=>{const t=document.querySelector('[data-wb-node="dr"] .ProseMirror table');return !!t&&t.querySelectorAll('tr').length===3&&t.querySelector('tr').children.length===2})()`))
     await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(300)
   }
+  console.log('高亮块(callout)与 ==高亮==:语法同 Obsidian')
+  { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
+    const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }
+    const textOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
+    const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await ev(expr)) return true; await sleep(60) } return false }
+    const openEditor = async (id, text = '') => { await reset([T(id, 100, 100, 480, 360, { title: 'co', text })]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(250); await ev(`window.__wb.store.select(['${id}']); window.__wb.store.setEditing('${id}')`); await sleep(500); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="${id}"] .ProseMirror');ed.focus();const r=document.createRange();r.selectNodeContents(ed);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`) }
+    const leave = async () => { await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.setEditing(null)`); await sleep(600) }
+    const view = (id) => ev(`(()=>{const c=document.querySelector('[data-wb-node="${id}"] .wb-body .wb-callout');if(!c)return null;const q=(s)=>c.querySelector(s);return {type:c.dataset.callout,color:c.dataset.calloutColor,fold:c.dataset.fold||null,title:q('.wb-callout-title-text')?.textContent,bodyVisible:getComputedStyle(q('.wb-callout-body')).display!=='none',bodyText:q('.wb-callout-body')?.textContent,icon:q('.wb-callout-icon')?.dataset.icon}})()`)
+
+    // ---- 读取:各种写法渲染成 callout ----
+    await reset([T('c1', 100, 100, 480, 300, { text: '> [!warning] 注意事项\n> 小心 **操作**' })]); await sleep(400)
+    { const v = await view('c1')
+      check('Obsidian 写法渲染成高亮块:类型、标题、正文', !!v && v.type === 'warning' && v.title === '注意事项' && v.bodyText.includes('小心') && v.bodyVisible, JSON.stringify(v))
+      check('类型决定颜色与图标(warning → 橙色 + 警示图标)', !!v && v.color === 'orange' && v.icon === 'alert', JSON.stringify(v)) }
+    await reset([T('c2', 100, 100, 480, 300, { text: '> [!tip]\n> 无标题' })]); await sleep(400)
+    check('没写标题:显示类型名(首字母大写)', (await view('c2'))?.title === 'Tip')
+    await reset([T('c3', 100, 100, 480, 300, { text: '> [!TLDR] 摘要\n> x' })]); await sleep(400)
+    check('类型不区分大小写,别名映射(TLDR → abstract 样式)', await ev(`document.querySelector('[data-wb-node="c3"] .wb-callout')?.dataset.calloutKind`) === 'abstract')
+    await reset([T('c4', 100, 100, 480, 300, { text: '> [!my-custom] 自定义\n> x' })]); await sleep(400)
+    { const v = await view('c4'); check('未知类型:按 note 的样式显示,保留原类型名', !!v && v.type === 'my-custom' && v.color === 'blue', JSON.stringify(v)) }
+    await reset([T('c5', 100, 100, 480, 300, { text: '> 普通引用\n> 第二行' })]); await sleep(400)
+    check('普通引用不受影响(仍是 blockquote,不是高亮块)', await ev(`!!document.querySelector('[data-wb-node="c5"] .wb-body blockquote') && !document.querySelector('[data-wb-node="c5"] .wb-callout')`))
+    await reset([T('c6', 100, 100, 480, 300, { text: '> [!faq]- 能折叠吗?\n> 能。' })]); await sleep(400)
+    { const v = await view('c6'); check('[!type]- 默认折叠:正文隐藏,标题可见,有折叠标记', !!v && v.fold === 'closed' && !v.bodyVisible && v.title === '能折叠吗?', JSON.stringify(v)) }
+    await reset([T('c7', 100, 100, 480, 300, { text: '> [!faq]+ 默认展开\n> 正文' })]); await sleep(400)
+    check('[!type]+ 默认展开', (await view('c7'))?.fold === 'open' && (await view('c7'))?.bodyVisible)
+    await reset([T('c8', 100, 100, 480, 300, { text: '> [!question] 外层\n> 外文\n>\n> > [!todo] 内层\n> > 内文' })]); await sleep(400)
+    check('嵌套:内层高亮块在外层正文里', await ev(`document.querySelectorAll('[data-wb-node="c8"] .wb-callout .wb-callout').length`) === 1)
+    await reset([T('c9', 100, 100, 480, 300, { text: '> [!note] 表格\n>\n> | a | b |\n> | --- | --- |\n> | 1 | 2 |' })]); await sleep(400)
+    check('高亮块里可以放表格', await ev(`!!document.querySelector('[data-wb-node="c9"] .wb-callout table')`))
+    // 折叠点击(渲染态)
+    await reset([T('c10', 100, 100, 480, 300, { text: '> [!faq]- 点我\n> 正文' })]); await sleep(400)
+    // ---- slash 创建 ----
+    await openEditor('s1', '前文'); await typeText(' /高亮块'); await sleep(150)
+    check('/高亮块 出现在菜单里', await ev(`!!document.querySelector('.wb-slash [data-slash="callout"]')`))
+    await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-types]')`)
+    check('选高亮块 → 出现类型列表(13 种)', (await ev(`document.querySelectorAll('[data-callout-type]').length`)) === 13)
+    await key('ArrowDown', 'ArrowDown', 40); await key('ArrowDown', 'ArrowDown', 40); await key('ArrowDown', 'ArrowDown', 40); await key('ArrowDown', 'ArrowDown', 40); await sleep(80)
+    check('↓ 移动高亮到第 5 项(tip)', await ev(`document.querySelector('[data-callout-type].is-active')?.dataset.calloutType`) === 'tip')
+    await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="s1"] .ProseMirror .wb-callout')`)
+    check('选 tip → 当前段落变成 tip 高亮块', await ev(`document.querySelector('[data-wb-node="s1"] .ProseMirror .wb-callout')?.dataset.callout`) === 'tip')
+    check('选类型后菜单关闭、仍在编辑', (await ev('window.__wb.store.getState().editing')) === 's1' && !(await ev(`!!document.querySelector('.wb-slash')`)))
+    await typeText('正文内容'); await leave()
+    { const md = await textOf('s1'); check('存盘为 Obsidian 语法', /> \[!tip\]/.test(md) && md.includes('正文内容'), JSON.stringify(md)); check('"/高亮块" 文字已删除', !md.includes('/高亮块') && !md.includes('/')) }
+    // 用鼠标点类型
+    await openEditor('s2'); await typeText('/callout'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-types]')`)
+    { // 列表放不下全部 13 项:danger 在可视区之外,真实用户要先滚动列表。用滚轮事件滚动(而不是 scrollIntoView,后者会连画布一起滚)
+      const l = await ev(`(()=>{const e=document.querySelector('.wb-slash-types').getBoundingClientRect();return {x:e.left+e.width/2,y:e.top+e.height/2}})()`)
+      await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: l.x, y: l.y, deltaX: 0, deltaY: 400 }); await sleep(200)
+      const c = await ev(`(()=>{const lr=document.querySelector('.wb-slash-types').getBoundingClientRect();const e=document.querySelector('[data-callout-type="danger"]').getBoundingClientRect();return {x:e.left+e.width/2,y:e.top+e.height/2,visible:e.top>=lr.top&&e.bottom<=lr.bottom}})()`)
+      check('滚动列表后,danger 项进入可视区', c.visible, JSON.stringify(c))
+      await mouse('mouseMoved', c.x, c.y); await sleep(60); await mouse('mousePressed', c.x, c.y); await mouse('mouseReleased', c.x, c.y) }
+    check('鼠标点 danger → 红色高亮块,且仍在编辑', await until(`document.querySelector('[data-wb-node="s2"] .ProseMirror .wb-callout')?.dataset.calloutColor==='red'`) && (await ev('window.__wb.store.getState().editing')) === 's2')
+    await leave()
+    // Esc 回到命令列表
+    await openEditor('s3'); await typeText('/高亮块'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-types]')`)
+    await key('Escape', 'Escape', 27); await sleep(150)
+    check('类型列表里按 Esc:回到命令列表,不创建、不退出编辑', !!(await ev(`!!document.querySelector('.wb-slash [data-slash]')`)) && (await ev('window.__wb.store.getState().editing')) === 's3' && !(await ev(`!!document.querySelector('[data-wb-node="s3"] .wb-callout')`)))
+    await leave()
+    // ---- 编辑态:标题、折叠 ----
+    await openEditor('e1', '> [!note] 原标题\n> 正文'); await sleep(300)
+    check('编辑态:标题栏是输入框,内容为原标题', await ev(`document.querySelector('[data-wb-node="e1"] .wb-callout-title-input')?.value`) === '原标题')
+    await ev(`(()=>{const i=document.querySelector('[data-wb-node="e1"] .wb-callout-title-input');i.focus();i.select()})()`); await typeText('新标题')
+    check('在标题栏输入时仍在编辑(不会退出卡片)', (await ev('window.__wb.store.getState().editing')) === 'e1')
+    await key('Enter', 'Enter', 13); await sleep(150)
+    check('标题栏里回车 → 光标进入正文', await ev(`(()=>{const s=getSelection();return !!s.anchorNode&&!!document.querySelector('[data-wb-node="e1"] .wb-callout-body')?.contains(s.anchorNode)})()`))
+    await typeText('追加'); await leave()
+    { const md = await textOf('e1'); check('改标题后存盘:标题更新,光标进入正文开头(追加的字在原正文之前)', md.startsWith('> [!note] 新标题') && md.includes('追加正文'), JSON.stringify(md)) }
+    // 折叠(编辑态点标题栏)
+    await openEditor('e2', '> [!tip]+ 可折叠\n> 内容'); await sleep(300)
+    { const c = await ev(`(()=>{const e=document.querySelector('[data-wb-node="e2"] .wb-callout-title').getBoundingClientRect();return {x:e.right-14,y:e.top+e.height/2}})()`)
+      await mouse('mouseMoved', c.x, c.y); await sleep(60); await mouse('mousePressed', c.x, c.y); await mouse('mouseReleased', c.x, c.y); await sleep(250) }
+    check('点标题栏:折叠状态在 open ↔ closed 之间切换', await ev(`document.querySelector('[data-wb-node="e2"] .wb-callout')?.dataset.fold`) === 'closed')
+    await leave()
+    check('折叠状态存盘为 [!tip]-', /\[!tip\]-/.test(await textOf('e2')), await textOf('e2'))
+    // 渲染态折叠点击不改数据(渲染态只读)
+    // ---- 往返稳定 ----
+    for (const [id, md] of [['r1', '> [!info] T\n> 第二段\n>\n> - 列表'], ['r2', '> [!note] 带表格\n>\n> | a   | b   |\n> | --- | --- |\n> | 1   | 2   |'], ['r3', '> [!question] 外\n> 外文\n>\n> > [!todo] 内\n> > 内文'], ['r4', '> [!warning]- 折叠\n> 内容'], ['r5', '> [!tip] 只有标题']]) {
+      await openEditor(id, md); await sleep(300); await leave()
+      check(`未改动退出编辑,内容不变:${md.split('\n')[0].slice(0, 22)}…`, (await textOf(id)) === md, JSON.stringify(await textOf(id)))
+    }
+
+    // ---- ==高亮== ----
+    await reset([T('h1', 100, 100, 480, 300, { text: '这是 ==重点== 文字,a == b 不是' })]); await sleep(400)
+    check('==文字== 渲染成高亮(mark)', await ev(`[...document.querySelectorAll('[data-wb-node="h1"] .wb-body mark')].map(m=>m.textContent).join('|')`) === '重点')
+    check('a == b 这种带空格的等号不当作高亮', (await ev(`document.querySelectorAll('[data-wb-node="h1"] .wb-body mark').length`)) === 1)
+    await openEditor('h2'); await typeText('先 ==关键'); await typeText('==')
+    check('输入 ==文字== 的结束 == 时自动转成高亮', await until(`document.querySelector('[data-wb-node="h2"] .ProseMirror mark')?.textContent==='关键'`))
+    await typeText(' 后面'); await leave()
+    check('高亮存盘为 ==文字==', (await textOf('h2')).includes('==关键==') , JSON.stringify(await textOf('h2')))
+    // 快捷键 Mod-Shift-H(macOS 是 Meta,其它平台是 Ctrl;Tiptap 的 Mod 在测试浏览器(Linux/Mac)上解析为其中之一)
+    await openEditor('h3', '选中这段'); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="h3"] .ProseMirror');const r=document.createRange();r.selectNodeContents(ed.firstChild);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    await ev(`window.__hs = navigator.platform`)
+    const isMac = /Mac/i.test(await ev('navigator.platform'))
+    await key('H', 'KeyH', 72, { modifiers: 8 | (isMac ? 4 : 2) }); await sleep(250)
+    check('Mod-Shift-H:选中文字变成高亮', await ev(`document.querySelector('[data-wb-node="h3"] .ProseMirror mark')?.textContent`) === '选中这段')
+    await key('H', 'KeyH', 72, { modifiers: 8 | (isMac ? 4 : 2) }); await sleep(250)
+    check('再按一次取消高亮', (await ev(`document.querySelectorAll('[data-wb-node="h3"] .ProseMirror mark').length`)) === 0)
+    await leave()
+    // 字面量保护:普通文字里的 == 不能在存盘后变成高亮
+    await openEditor('h4'); await typeText('字面量 ==不是高亮 =='); await typeText(' 与 a==b 与 x'); await leave()
+    { const md = await textOf('h4'); await ev(`window.__wb.store.setEditing('h4')`); await sleep(400); await leave()
+      check('键入的字面量 == 存盘后不会被读成高亮', (await textOf('h4')) === md && !(await ev(`!!document.querySelector('[data-wb-node="h4"] .wb-body mark')`)), JSON.stringify(md)) }
+    await openEditor('h5'); await typeText('等号 ==abc=='); await until(`!!document.querySelector('[data-wb-node="h5"] .ProseMirror mark')`)
+    await key('z', 'KeyZ', 90, { modifiers: isMac ? 4 : 2 }); await sleep(250)
+    check('输入规则转换成高亮后,撤销先还原成输入的原文(不是整段删掉)', (await ev(`document.querySelectorAll('[data-wb-node="h5"] .ProseMirror mark').length`)) === 0 && (await ev(`document.querySelector('[data-wb-node="h5"] .ProseMirror').textContent`)).includes('==abc=='))
+    await leave()
+    // 代码块里的 == 不动
+    await reset([T('h6', 100, 100, 480, 300, { text: '```\na ==b== c\n```\n\n`==x==`' })]); await sleep(400)
+    check('代码块与行内代码里的 ==x== 不渲染成高亮', (await ev(`document.querySelectorAll('[data-wb-node="h6"] .wb-body mark').length`)) === 0)
+    await ev(`window.__wb.store.select(['h6']); window.__wb.store.setEditing('h6')`); await sleep(400); await leave()
+    check('代码里的 == 未做修改就退出:原样存回', (await textOf('h6')).includes('a ==b== c') && (await textOf('h6')).includes('`==x==`'), JSON.stringify(await textOf('h6')))
+    // /高亮 命令:先选中文字,再从菜单选"高亮文字"
+    await openEditor('h7', '选这几个字'); await ev(`(()=>{const ed=document.querySelector('[data-wb-node="h7"] .ProseMirror');const t=ed.firstChild.firstChild;const r=document.createRange();r.setStart(t,2);r.setEnd(t,5);const s=getSelection();s.removeAllRanges();s.addRange(r)})()`)
+    await leave()
+    // 引用 → 高亮块 转换:普通引用里加类型
+    await openEditor('q1', '> 普通引用'); await sleep(300); await leave()
+    check('普通引用不会被无端加上类型', (await textOf('q1')) === '> 普通引用', JSON.stringify(await textOf('q1')))
+    // 表格单元格里的高亮块:单元格含块级内容 → 整张表存 HTML,不丢高亮块
+    await openEditor('t1'); await typeText('/table'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-table]')`)
+    await ev(`document.querySelector('.wb-slash-sizeinput').focus()`); await typeText('2x2'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-node="t1"] .ProseMirror table')`)
+    await typeText('/高亮块'); await key('Enter', 'Enter', 13); await until(`!!document.querySelector('[data-wb-slash-types]')`); await key('Enter', 'Enter', 13); await sleep(250); await typeText('单元格里的提示'); await leave()
+    { const md = await textOf('t1'); const v = await ev(`!!document.querySelector('[data-wb-node="t1"] .wb-body td .wb-callout, [data-wb-node="t1"] .wb-body th .wb-callout')`)
+      check('表格单元格里的高亮块:存盘不丢,渲染仍是高亮块', /单元格里的提示/.test(md) && v, JSON.stringify(md).slice(0, 200)) }
+  }
   console.log('slash 图片:上传到 assets/、存盘用相对路径、渲染映射真实 URL')
   { const key = (k, code, vk, extra = {}) => send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, ...extra })
     const typeText = async (text) => { await send('Input.insertText', { text }); await sleep(120) }

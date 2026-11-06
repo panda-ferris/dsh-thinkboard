@@ -372,3 +372,54 @@
 .wb-md .selectedCell:after{content:'';position:absolute;inset:0;background:color-mix(in srgb,var(--wb-accent) 18%,transparent);pointer-events:none}
 .wb-md img{max-width:100%;height:auto;border-radius:4px}
 .wb-md img.ProseMirror-selectednode{outline:2px solid var(--wb-accent)}
+
+/* ---------- 高亮块(callout):颜色取自类型,随主题的明暗自适应 ---------- */
+.wb-callout{--co:#3b82f6;margin:.6em 0;border-radius:8px;overflow:hidden;
+  background:color-mix(in srgb,var(--co) 11%,transparent);border:1px solid color-mix(in srgb,var(--co) 28%,transparent)}
+.wb-callout[data-callout-color=blue]{--co:#3b82f6}
+.wb-callout[data-callout-color=teal]{--co:#14b8a6}
+.wb-callout[data-callout-color=green]{--co:#22c55e}
+.wb-callout[data-callout-color=yellow]{--co:#eab308}
+.wb-callout[data-callout-color=orange]{--co:#f97316}
+.wb-callout[data-callout-color=red]{--co:#ef4444}
+.wb-callout[data-callout-color=purple]{--co:#a855f7}
+.wb-callout[data-callout-color=gray]{--co:#8b8b93}
+.wb-callout-title{display:flex;align-items:center;gap:8px;padding:6px 10px;font-weight:600;color:var(--co);user-select:none}
+.wb-callout-title-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--co);filter:brightness(.92)}
+.wb-callout-icon{flex:none;width:16px;height:16px;background:currentColor;-webkit-mask:var(--ico) center/contain no-repeat;mask:var(--ico) center/contain no-repeat}
+.wb-callout-body{padding:2px 12px 8px}
+.wb-callout-body>*:first-child{margin-top:0}
+.wb-callout-body>*:last-child{margin-bottom:0}
+/* 没有正文(标题单独成块)时,不留空的内边距 */
+.wb-callout-body:empty,.wb-callout-body>p:only-child:empty{display:none}
+/* 折叠 */
+.wb-callout[data-fold]>.wb-callout-title{cursor:pointer}
+.wb-callout-chevron{flex:none;width:14px;height:14px;background:currentColor;opacity:.7;transition:transform .15s;
+  -webkit-mask:var(--ico-chevron) center/contain no-repeat;mask:var(--ico-chevron) center/contain no-repeat}
+.wb-callout[data-fold=closed] .wb-callout-chevron{transform:rotate(-90deg)}
+.wb-callout[data-fold=closed]>.wb-callout-body{display:none}
+/* 图标:内联 SVG 作为 mask,颜色跟随文字色 */
+.wb-callout{--ico-chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=pencil]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 2.5l2.5 2.5L5.5 13H3v-2.5z'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=clipboard]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='3' width='9' height='10.5' rx='1.5'/%3E%3Cpath d='M6 3V2h4v1M6 7h4M6 10h4'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=info]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M8 7.5V11M8 5.2v.1'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=check-circle]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M5.5 8.2l1.8 1.8 3.2-3.6'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=flame]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 14c-2.5 0-4-1.7-4-3.8 0-2 1.5-3 2-5 1 .8 1.6 1.800 1.600 3 .8-.6 1.200-1.600 1.200-3 1.600 1.400 3.200 3.200 3.200 5C12 12.300 10.500 14 8 14z'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=check]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8.500l3.200 3.200L13 4.500'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=help]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M6.200 6.300a1.900 1.900 0 013.600.7c0 1.200-1.800 1.500-1.800 2.600M8 11.500v.1'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=alert]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.500l6 10.500H2z'/%3E%3Cpath d='M8 6.800v2.700M8 11.400v.1'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=x]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 4l8 8M12 4l-8 8'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=zap]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 2L3.500 9H8l-1 5 5.500-7H8z'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=bug]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='5' width='6' height='8' rx='3'/%3E%3Cpath d='M6.500 5a1.500 1.500 0 013 0M2.500 8.500H5M11 8.500h2.500M3.500 12L5.200 11M12.500 12L10.800 11M3.500 5l1.800 1.200M12.500 5l-1.800 1.200'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=list]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 4.500h7M6 8h7M6 11.500h7M3 4.500h.1M3 8h.1M3 11.500h.1'/%3E%3C/svg%3E")}
+.wb-callout-icon[data-icon=quote]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7h3v4H3zM3 7c0-2 1-3 3-3.500M9 7h3v4H9zM9 7c0-2 1-3 3-3.500'/%3E%3C/svg%3E")}
+
+/* 编辑态的标题输入框:看起来像文字,点了才像输入框 */
+.wb-callout-title-input{flex:1;min-width:0;font:inherit;font-weight:600;color:var(--co);background:transparent;border:none;outline:none;padding:0}
+.wb-callout-title-input::placeholder{color:var(--co);opacity:.65}
+.wb-callout-title-input:focus{border-bottom:1px dashed color-mix(in srgb,var(--co) 60%,transparent)}
+
+.wb-md mark{background:color-mix(in srgb,#facc15 45%,transparent);color:inherit;border-radius:3px;padding:0 2px}
+
+.wb-slash-dot{width:10px;height:10px;border-radius:50%}
+.wb-slash-types{max-height:300px}

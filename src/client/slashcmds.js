@@ -2,6 +2,7 @@
 // 被卡片内编辑器和详情面板编辑器共用。
 
 import { clampTableSize, isImageFile } from '../core/slash.js'
+import { isValidType } from '../core/callout.js'
 
 /** 在光标处删掉 "/查询" 再执行命令。slash = { from, to }(文档位置)。 */
 export function runCommand(editor, slash, id, extra) {
@@ -18,6 +19,8 @@ export function runCommand(editor, slash, id, extra) {
     case 'ordered': return chain().toggleOrderedList().run()
     case 'task': return chain().toggleTaskList().run()
     case 'quote': return chain().toggleBlockquote().run()
+    case 'callout': return chain().setCallout(isValidType(extra?.type) ? extra.type : 'note').run()
+    case 'highlight': return chain().toggleHighlight().run()
     case 'code': return chain().toggleCodeBlock().run()
     case 'divider': return chain().setHorizontalRule().run()
     default: return false

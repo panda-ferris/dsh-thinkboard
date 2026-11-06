@@ -16,6 +16,8 @@ import { mergeAdjacentLists } from '../core/listmerge.js'
 import { complexTableMarkdown } from '../core/tablemd.js'
 import { detectSlash, isImageFile, TABLE_DEFAULT } from '../core/slash.js'
 import { BoardImage, setCurrentBoard } from './boardimage.js'
+import { Callout } from './callout.js'
+import { Highlight, escapeLiteralHighlight } from './highlight.js'
 import { SlashMenu } from './slashmenu.js'
 import { runCommand, insertImages, pickImageFiles } from './slashcmds.js'
 
@@ -186,7 +188,9 @@ const SlashTrigger = Extension.create({
 })
 
 const extensions = (slash) => [
-  StarterKit.configure({ link: { openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } } }),
+  StarterKit.configure({ blockquote: false, link: { openOnClick: false, HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' } } }),
+  Callout,
+  Highlight,
   Markdown,
   RichTable, TableRow, TableHeader, TableCell,
   TaskList, TaskItem.configure({ nested: true }),
@@ -195,6 +199,13 @@ const extensions = (slash) => [
   MergeLists,
   ...(slash ? [SlashTrigger.configure(slash)] : []),
 ]
+
+/** 所有编辑器(卡片内、详情面板、无头渲染)都从这里创建,保证存盘转义等补丁一个都不漏。 */
+function createEditor(options) {
+  const ed = new Editor(options)
+  escapeLiteralHighlight(ed)
+  return ed
+}
 
 let headless
 const cache = new Map()
@@ -209,7 +220,7 @@ export function renderMarkdown(md, boardId = null) {
   const hit = cache.get(cacheKey)
   if (hit !== undefined) return hit
   try {
-    headless ??= new Editor({ extensions: extensions(), content: '', editable: false })
+    headless ??= createEditor({ extensions: extensions(), content: '', editable: false })
     headless.commands.setContent(md, { contentType: 'markdown', emitUpdate: false })
     const html = headless.getHTML()
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value)
@@ -235,7 +246,7 @@ export function MarkdownEditor({ initial, placeholder, onCommit, autofocus = tru
 
   React.useEffect(() => {
     setCurrentBoard(boardId ?? null)
-    const ed = new Editor({
+    const ed = createEditor({
       element: hostRef.current,
       extensions: extensions(slashOptions),
       content: initial || '',
@@ -357,7 +368,7 @@ export function LiveMarkdownEditor({ value, placeholder, onChange, delay = 400, 
 
   React.useEffect(() => {
     setCurrentBoard(boardId ?? null)
-    const ed = new Editor({
+    const ed = createEditor({
       element: hostRef.current,
       extensions: extensions(slashOptions),
       content: value || '',

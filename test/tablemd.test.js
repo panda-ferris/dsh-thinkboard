@@ -87,3 +87,37 @@ test('空表格、缺字段的节点不会抛错', () => {
   assert.equal(isComplexTable({ type: 'table' }), false); assert.equal(isComplexTable(null), false)
   assert.doesNotThrow(() => tableToHtml(table(row({ type: 'tableCell' }))))
 })
+
+test('单元格里的高亮块(callout):输出带类型/标题/折叠的结构,不退化成普通引用', () => {
+  const co = (attrs, ...blocks) => ({ type: 'blockquote', attrs, content: blocks })
+  const html = tableToHtml(table(row(cell(co({ calloutType: 'warning', calloutFold: 'closed', calloutTitle: '注意' }, p('正文'))))))
+  assert.ok(html.includes('class="wb-callout"') && html.includes('data-callout="warning"') && html.includes('data-callout-color="orange"') && html.includes('data-fold="closed"'))
+  assert.ok(html.includes('<span class="wb-callout-title-text">注意</span>') && html.includes('<div class="wb-callout-body"><p>正文</p></div>'))
+  assert.ok(!html.includes('<blockquote>'))
+})
+
+test('单元格里的高亮块没写标题:标题栏显示类型名;普通引用仍是 <blockquote>', () => {
+  const co = (attrs, ...blocks) => ({ type: 'blockquote', attrs, content: blocks })
+  assert.ok(tableToHtml(table(row(cell(co({ calloutType: 'tip' }, p('x')))))).includes('>Tip</span>'))
+  assert.ok(tableToHtml(table(row(cell(co({}, p('引用')))))).includes('<blockquote><p>引用</p></blockquote>'))
+})
+
+test('单元格里的高亮块:类型名不合法(含引号/尖括号等)时不输出任何 callout 属性,按普通引用处理,内容保留', () => {
+  for (const bad of ['a"b', '<x>', 'a b', 'x"onmouseover="alert(1)', '']) {
+    const co = { type: 'blockquote', attrs: { calloutType: bad, calloutTitle: '<x>' }, content: [p('内容')] }
+    const html = tableToHtml(table(row(cell(co))))
+    assert.ok(!html.includes('wb-callout') && !html.includes('data-callout'), `${bad} → ${html}`)
+    assert.ok(html.includes('<blockquote><p>内容</p></blockquote>'), html)
+  }
+})
+
+test('单元格里的高亮块:标题里的 < > & 被转义(类型合法时)', () => {
+  const co = { type: 'blockquote', attrs: { calloutType: 'note', calloutTitle: '<b>&x' }, content: [p('x')] }
+  const html = tableToHtml(table(row(cell(co))))
+  assert.ok(html.includes('&lt;b&gt;&amp;x') && !html.includes('<b>'), html)
+})
+
+test('行内高亮标记在表格 HTML 里输出为 <mark>,与其它标记嵌套顺序固定', () => {
+  const t = table(row(cell(p({ type: 'text', text: 'x', marks: [{ type: 'highlight' }, { type: 'bold' }] }), ul(li(p('a'))))))
+  assert.ok(tableToHtml(t).includes('<strong><mark>x</mark></strong>'), tableToHtml(t))
+})

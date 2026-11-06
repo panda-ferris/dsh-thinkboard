@@ -11,6 +11,8 @@
 //
 // 纯函数,输入是 Tiptap 的 JSON 节点,不依赖 DOM / 编辑器。
 
+import { isValidType, canonicalType, defaultTitle } from './callout.js'
+
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const escAttr = (s) => esc(s).replace(/"/g, '&quot;')
 
@@ -29,9 +31,9 @@ export function isComplexTable(table) {
 }
 
 // ---------- 行内:文本 + 标记 ----------
-const MARK_TAG = { bold: 'strong', italic: 'em', strike: 's', underline: 'u', code: 'code' }
+const MARK_TAG = { bold: 'strong', italic: 'em', strike: 's', underline: 'u', code: 'code', highlight: 'mark' }
 // 标记的嵌套顺序固定,保证相同内容总是序列化成同一个字符串(稳定、可测)
-const MARK_ORDER = ['link', 'bold', 'italic', 'strike', 'underline', 'code']
+const MARK_ORDER = ['link', 'bold', 'italic', 'strike', 'underline', 'highlight', 'code']
 
 function inline(node) {
   if (node.type === 'hardBreak') return '<br>'
@@ -58,7 +60,20 @@ function block(node) {
       return `<ol${start}>${(node.content ?? []).map(item).join('')}</ol>`
     }
     case 'taskList': return `<ul data-type="taskList">${(node.content ?? []).map(taskItem).join('')}</ul>`
-    case 'blockquote': return `<blockquote>${(node.content ?? []).map(block).join('')}</blockquote>`
+    case 'blockquote': {
+      const a = node.attrs ?? {}
+      const inner = (node.content ?? []).map(block).join('')
+      // 高亮块(callout):输出与编辑器 renderHTML 同构的结构,读取时由 callout 的 parseHTML 还原类型/标题/折叠
+      if (isValidType(a.calloutType)) {
+        const canon = canonicalType(a.calloutType)
+        const title = (a.calloutTitle || '').trim() || defaultTitle(a.calloutType)
+        const fold = a.calloutFold ? ` data-fold="${escAttr(a.calloutFold)}"` : ''
+        return `<div class="wb-callout" data-callout="${escAttr(a.calloutType)}" data-callout-kind="${canon.id}" data-callout-color="${canon.color}"${fold}>`
+          + `<div class="wb-callout-title"><span class="wb-callout-icon" data-icon="${canon.icon}"></span><span class="wb-callout-title-text">${esc(title)}</span></div>`
+          + `<div class="wb-callout-body">${inner}</div></div>`
+      }
+      return `<blockquote>${inner}</blockquote>`
+    }
     case 'codeBlock': return `<pre><code>${esc((node.content ?? []).map((n) => n.text ?? '').join(''))}</code></pre>`
     case 'horizontalRule': return '<hr>'
     default: return `<p>${inlines(node.content)}</p>`

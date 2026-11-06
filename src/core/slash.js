@@ -12,6 +12,8 @@ export const COMMANDS = [
   { id: 'ordered', group: 'format', icon: 'ordered', keywords: ['ordered', 'number', 'ol', '有序', '序号', '编号', '列表'] },
   { id: 'task', group: 'format', icon: 'task', keywords: ['task', 'todo', 'check', '待办', '任务', '清单', '勾选'] },
   { id: 'quote', group: 'format', icon: 'quote', keywords: ['quote', 'blockquote', '引用'] },
+  { id: 'callout', group: 'format', icon: 'callout', keywords: ['callout', 'admonition', 'note', 'tip', 'warning', 'info', '高亮', '高亮块', '提示', '提示块', '警告', '注意', '标注'], needsInput: true },
+  { id: 'highlight', group: 'format', icon: 'highlight', keywords: ['highlight', 'mark', 'marker', '高亮', '荧光', '标记'] },
   { id: 'code', group: 'format', icon: 'code', keywords: ['code', 'codeblock', '代码', '代码块'] },
   { id: 'divider', group: 'format', icon: 'divider', keywords: ['divider', 'hr', 'line', 'rule', '分割线', '分隔线', '横线'] },
 ]
