@@ -2462,16 +2462,11 @@ try {
     check('text/html:高亮块变成带颜色的引用块(没有我们的 class,外部软件也能显示)', /<blockquote[^>]*style="[^"]*border-left:4px solid #f97316/.test(copied.html) && !/class="[^"]*wb-callout/.test(copied.html) && /注意/.test(copied.html), copied.html.slice(0, 260))
     check('text/html:表格带内联边框(外部软件不依赖 class 也看得出是表格)', /<table[^>]*border="1"/.test(copied.html) && /<td style="border:1px solid/.test(copied.html) && /<th style="[^"]*background:#f3f3f3/.test(copied.html) && !/<colgroup/.test(copied.html))
     check('text/html:高亮带内联底色', /<mark style="background-color:#fff176">高亮<\/mark>/.test(copied.html))
-    check('text/html:列表项里的单个段落被解开(<li>文字<ol>…</ol></li>),多级列表在只认直接写法的目标(如 KM)里不丢层级', /<li>一<ul><li>二<\/li><\/ul><\/li>/.test(copied.html) && !/<li><p>/.test(copied.html), copied.html.slice(copied.html.indexOf('<ul>'), copied.html.indexOf('<ul>') + 120))
-    check('text/html:有序多级列表同样解开', await (async () => {
+    check('text/html:多级列表保持 Tiptap 默认写法 <li><p>…</p>[嵌套列表]</li>(曾试过解开 <p> 适配 KM,实测 KM 反而把列表并成一行,已撤回)', /<li><p>一<\/p><ul><li><p>二<\/p><\/li><\/ul><\/li>/.test(copied.html), copied.html.slice(copied.html.indexOf('<ul>'), copied.html.indexOf('<ul>') + 120))
+    check('  …有序多级列表同样保持原写法', await (async () => {
       await open('1. item 1\n   1. sub 1\n   2. sub 2\n2. item 2')
       const c2 = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return dt.getData('text/html')})()`)
-      return /<ol[^>]*><li>item 1<ol><li>sub 1<\/li><li>sub 2<\/li><\/ol><\/li><li>item 2<\/li><\/ol>/.test(c2)   // 第一个顶层元素带 data-pm-slice 属性
-    })())
-    check('  …列表项里有多个段落时不解开(避免丢掉段落分隔)', await (async () => {
-      await open('- 第一段\n\n  第二段')
-      const c3 = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return dt.getData('text/html')})()`)
-      return /<li><p>第一段<\/p><p>第二段<\/p><\/li>/.test(c3)
+      return /<ol[^>]*><li><p>item 1<\/p><ol><li><p>sub 1<\/p><\/li><li><p>sub 2<\/p><\/li><\/ol><\/li><li><p>item 2<\/p><\/li><\/ol>/.test(c2)
     })())
     await open(COPYMD)
     check('text/html:远程图片原样保留;没有 data: 巨型字符串', /<img src="https:\/\/example\.com\/a\.png"/.test(copied.html) && !/data:image/.test(copied.html))

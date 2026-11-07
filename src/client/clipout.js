@@ -23,17 +23,6 @@ function imgToDataUrl(img) {
   } catch { return null }   // 跨域污染画布等
 }
 
-/** <li><p>x</p> [嵌套 ul/ol]</li> → <li>x [嵌套]</li>;li 内含多个段落、或第一个子节点不是 <p> 时不动。 */
-export function unwrapSingleParagraph(li) {
-  const kids = [...li.children]
-  const paras = kids.filter((k) => k.tagName === 'P')
-  if (paras.length !== 1 || kids[0] !== paras[0]) return false
-  const p = paras[0]
-  while (p.firstChild) li.insertBefore(p.firstChild, p)
-  p.remove()
-  return true
-}
-
 /** 就地改写一个 DOM 片段(DocumentFragment 或元素),返回它自己。 */
 export function externalize(root) {
   const doc = root.ownerDocument || document
@@ -69,12 +58,9 @@ export function externalize(root) {
     const alt = img.getAttribute('alt') || '图片'
     img.replaceWith(doc.createTextNode(`[${alt}]`))
   })
-  // 5) 列表项里"只有一个段落"时解开:<li><p>文字</p><ol>…</ol></li> → <li>文字<ol>…</ol></li>
-  //    Tiptap 的列表项内容是块(所以有 <p>),但很多粘贴目标(KM、部分富文本编辑器)只认 <li>文字</li> 这种直接写法,
-  //    遇到 <li><p> 会把每一项当成独立段落,多级列表的层级就丢了。解开后对标准 HTML 解析器也完全等价。
-  //    只解开"第一个子节点是 <p>"的列表项;项内有多个段落时保持不动(解开会丢掉段落分隔)。
-  root.querySelectorAll('li').forEach((li) => unwrapSingleParagraph(li))
-  // 6) 清理只对编辑器有意义的属性
+  // 关于列表:曾尝试把 <li><p>文字</p></li> 解开成 <li>文字</li> 以适配 KM,实测 KM 反而把整个多级列表并成一行
+  // (比不解开更差),已撤回。保持 Tiptap 默认的 <li><p>…</p>[嵌套列表]</li>:飞书、本应用能还原层级,KM 会把各项当作段落。
+  // 5) 清理只对编辑器有意义的属性
   // data-pm-slice 是 ProseMirror 在序列化之后才加到第一个顶层元素上的(用于"粘回本编辑器时保留切片边界"),
   // 这里清不掉也不必清:它是无害的普通属性,外部软件会忽略;粘回我们自己的编辑器时它还有用。
   root.querySelectorAll('[contenteditable],[data-wb-ui]').forEach((e) => { e.removeAttribute('contenteditable'); e.removeAttribute('data-wb-ui') })
