@@ -27,7 +27,7 @@ const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chro
   '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion', 'about:blank'], { stdio: 'ignore' })
 let ws, id = 0; const pending = new Map()
 // 每条 CDP 命令 20 秒超时:页面卡死时直接报出"哪条命令没返回",而不是让整套测试无声地挂住
-const send = (method, params = {}) => new Promise((r, rej) => { const i = ++id; const to = setTimeout(() => { pending.delete(i); rej(new Error(`CDP 命令超时(20s): ${method} ${JSON.stringify(params).slice(0, 160)}`)) }, 20000); pending.set(i, (x) => { clearTimeout(to); r(x) }); ws.send(JSON.stringify({ id: i, method, params })) })
+const send = (method, params = {}) => new Promise((r, rej) => { const i = ++id; const to = setTimeout(() => { pending.delete(i); hangDiag(method).finally(() => rej(new Error(`CDP 命令超时(20s): ${method} ${JSON.stringify(params).slice(0, 160)}`))) }, 20000); pending.set(i, (x) => { clearTimeout(to); r(x) }); ws.send(JSON.stringify({ id: i, method, params })) })
 const ev = async (expr) => { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails.exception?.description ?? r.result.exceptionDetails)); return r.result?.result?.value }
 const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
 const drag = async (x1, y1, x2, y2, steps = 8, extra = {}) => { await mouse('mousePressed', x1, y1, extra); for (let i = 1; i <= steps; i++) await mouse('mouseMoved', x1 + ((x2 - x1) * i) / steps, y1 + ((y2 - y1) * i) / steps, extra); await mouse('mouseReleased', x2, y2, extra) }
@@ -38,6 +38,19 @@ const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.no
 const onlyArg = process.argv.find((a) => a.startsWith('--only='))
 const ONLY = onlyArg ? onlyArg.slice(7).split(',').map((x) => x.trim()).filter(Boolean) : null
 const want = (title) => !ONLY || ONLY.some((k) => title.includes(k))
+// 命令超时时的诊断:请求调试器暂停主线程并取调用栈(几秒内没有回应 = 主线程不在执行 JS,可能在等系统/GPU/合成器)。
+let diagDone = false
+async function hangDiag(method) {
+  if (diagDone) return
+  diagDone = true
+  const ask = (m, p = {}) => new Promise((r) => { const i = ++id; const to = setTimeout(() => { pending.delete(i); r(null) }, 4000); pending.set(i, (x) => { clearTimeout(to); r(x) }); ws.send(JSON.stringify({ id: i, method: m, params: p })) })
+  const paused = new Promise((r) => { const h = (e) => { try { const m = JSON.parse(e.data); if (m.method === 'Debugger.paused') { ws.removeEventListener('message', h); r(m.params) } } catch {} }; ws.addEventListener('message', h); setTimeout(() => r(null), 4000) })
+  await ask('Debugger.enable'); await ask('Debugger.pause')
+  const p = await paused
+  console.log('   [挂起诊断]', method, p ? '主线程已暂停,调用栈: ' + (p.callFrames || []).slice(0, 6).map((f) => `${f.functionName || '(匿名)'}@${String(f.url).split('/').pop()}:${f.location.lineNumber + 1}`).join(' ← ') : '4 秒内无法暂停主线程(主线程没有在执行 JS,在等系统/合成器)')
+  const t = await ask('Runtime.evaluate', { expression: '1+1', returnByValue: true })
+  console.log('   [挂起诊断] 暂停后再求值:', t ? JSON.stringify(t.result?.result?.value ?? t.result) : '无响应')
+}
 const results = []
 const pageEvents = []
 const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info }); console.log(ok ? '  ✔' : '  ✖', name, info); if (!ok) failCtx.push(name) }
@@ -2449,6 +2462,18 @@ try {
     check('text/html:高亮块变成带颜色的引用块(没有我们的 class,外部软件也能显示)', /<blockquote[^>]*style="[^"]*border-left:4px solid #f97316/.test(copied.html) && !/class="[^"]*wb-callout/.test(copied.html) && /注意/.test(copied.html), copied.html.slice(0, 260))
     check('text/html:表格带内联边框(外部软件不依赖 class 也看得出是表格)', /<table[^>]*border="1"/.test(copied.html) && /<td style="border:1px solid/.test(copied.html) && /<th style="[^"]*background:#f3f3f3/.test(copied.html) && !/<colgroup/.test(copied.html))
     check('text/html:高亮带内联底色', /<mark style="background-color:#fff176">高亮<\/mark>/.test(copied.html))
+    check('text/html:列表项里的单个段落被解开(<li>文字<ol>…</ol></li>),多级列表在只认直接写法的目标(如 KM)里不丢层级', /<li>一<ul><li>二<\/li><\/ul><\/li>/.test(copied.html) && !/<li><p>/.test(copied.html), copied.html.slice(copied.html.indexOf('<ul>'), copied.html.indexOf('<ul>') + 120))
+    check('text/html:有序多级列表同样解开', await (async () => {
+      await open('1. item 1\n   1. sub 1\n   2. sub 2\n2. item 2')
+      const c2 = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return dt.getData('text/html')})()`)
+      return /<ol[^>]*><li>item 1<ol><li>sub 1<\/li><li>sub 2<\/li><\/ol><\/li><li>item 2<\/li><\/ol>/.test(c2)   // 第一个顶层元素带 data-pm-slice 属性
+    })())
+    check('  …列表项里有多个段落时不解开(避免丢掉段落分隔)', await (async () => {
+      await open('- 第一段\n\n  第二段')
+      const c3 = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return dt.getData('text/html')})()`)
+      return /<li><p>第一段<\/p><p>第二段<\/p><\/li>/.test(c3)
+    })())
+    await open(COPYMD)
     check('text/html:远程图片原样保留;没有 data: 巨型字符串', /<img src="https:\/\/example\.com\/a\.png"/.test(copied.html) && !/data:image/.test(copied.html))
     check('text/html:链接不带 target/rel 等编辑器专用属性', /<a href="https:\/\/a\.com"/.test(copied.html) || !/<a /.test(copied.html))
     await leave()
