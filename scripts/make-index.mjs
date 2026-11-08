@@ -8,8 +8,9 @@
 //   - 同一个版本号已在索引里、但指向了不同的提交(已发布的版本不可变;要改就升版本号)
 
 import { execFileSync } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import { readFile, writeFile, access, mkdir } from 'node:fs/promises'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -73,8 +74,22 @@ plugin.repository = { url: repoUrl }
 plugin.homepage = pkg.homepage ?? plugin.homepage
 
 // 用 dsh 自带的校验器检查(找得到就用;找不到只提示)
+// dsh 的安装位置随版本变化(目录安装 → app.asar),所以按优先级多找几个地方,并允许用环境变量指定:
+//   1) DSH_MARKET_INDEX_LIB
+//   2) 与 `dsh` 命令(或 DSH_BIN)同属一个安装的包目录:.../@deepseek-ai/dsh/node_modules/...
+//   3) 早期的目录式安装
+const dshBin = process.env.DSH_BIN || 'dsh'
+const fromDshBin = () => {
+  try {
+    const bin = execFileSync('which', [dshBin], { encoding: 'utf8' }).trim()
+    if (!bin) return undefined
+    const real = realpathSync(bin)                                    // .../@deepseek-ai/dsh/lib/bin.js
+    return join(dirname(real), '..', 'node_modules', '@deepseek-ai', 'dsh-plugin-market-index', 'lib', 'index.js')
+  } catch { return undefined }
+}
 const candidates = [
   process.env.DSH_MARKET_INDEX_LIB,
+  fromDshBin(),
   '/Applications/DeepSeek Harness.app/Contents/Resources/app/dsh/node_modules/@deepseek-ai/dsh-plugin-market-index/lib/index.js',
 ].filter(Boolean)
 let validated = false
