@@ -1,0 +1,89 @@
+{
+  "format": 1,
+  "title": {
+    "en": "ThinkBoard plugins",
+    "zh": "ThinkBoard 插件源"
+  },
+  "description": {
+    "en": "Releases of the ThinkBoard canvas for DeepSeek Harness.",
+    "zh": "DeepSeek Harness 的 ThinkBoard 画布插件发行版本。"
+  },
+  "plugins": [
+    {
+      "name": "dsh-thinkboard",
+      "title": {
+        "en": "ThinkBoard",
+        "zh": "ThinkBoard"
+      },
+      "description": {
+        "en": "An infinite canvas: Markdown and image cards, frames, flowchart shapes, labeled connections — editable by the built-in chat agent.",
+        "zh": "无限画布:Markdown 与图片卡片、框、流程图图形、带文字的连线,内置对话里的 agent 可直接读写。"
+      },
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMxZjZmZWIiLz48cmVjdCB4PSIxMCIgeT0iMTQiIHdpZHRoPSI0NCIgaGVpZ2h0PSIzNiIgcng9IjYiIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iLjE2IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMyIvPjxyZWN0IHg9IjE2IiB5PSIyMSIgd2lkdGg9IjE1IiBoZWlnaHQ9IjExIiByeD0iMi41IiBmaWxsPSIjZmZmIi8+PHJlY3QgeD0iMzYiIHk9IjM1IiB3aWR0aD0iMTIiIGhlaWdodD0iOSIgcng9IjIuNSIgZmlsbD0iI2ZmZDE2NiIvPjxwYXRoIGQ9Ik0zMSAyNi41aDVhNSA1IDAgMCAxIDUgNVYzNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PC9zdmc+Cg==",
+      "author": "panda-ferris",
+      "homepage": "https://github.com/panda-ferris/dsh-thinkboard#readme",
+      "repository": {
+        "url": "https://github.com/panda-ferris/dsh-thinkboard"
+      },
+      "metadata": {
+        "category": "canvas",
+        "keywords": [
+          "deepseek-harness",
+          "whiteboard",
+          "canvas",
+          "board",
+          "flowchart",
+          "markdown",
+          "knowledge-management"
+        ],
+        "labels": [
+          "markdown",
+          "flowchart",
+          "agent"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.2.0",
+          "publishTimestamp": 1794145842,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/panda-ferris/dsh-thinkboard",
+            "commit": "543a4b5d3d8920419bd8d29d8f9a810f6900bdef",
+            "path": "dist"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.1 <0.2.2-0"
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "categories": {
+      "canvas": {
+        "title": {
+          "en": "Canvas & notes",
+          "zh": "画布与笔记"
+        }
+      }
+    },
+    "labels": {
+      "markdown": {
+        "title": "Markdown"
+      },
+      "flowchart": {
+        "title": {
+          "en": "Flowchart",
+          "zh": "流程图"
+        }
+      },
+      "agent": {
+        "title": {
+          "en": "Agent-editable",
+          "zh": "agent 可编辑"
+        }
+      }
+    }
+  }
+}
