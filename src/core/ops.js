@@ -55,6 +55,8 @@ function validateNode(n) {
     if (n.align !== undefined && !['left', 'center', 'right'].includes(n.align)) throw new OpError('shape.align must be left | center | right')
     for (const k of ['fill', 'stroke']) if (n[k] !== undefined && typeof n[k] !== 'string') throw new OpError(`shape.${k} must be a string`)
   }
+  if (n.fold !== undefined && !['collapsed', 'expanded'].includes(n.fold)) throw new OpError('fold must be "collapsed" | "expanded" (omit it for the default state)')
+  if (n.baseHeight !== undefined && !(Number.isFinite(n.baseHeight) && n.baseHeight > 0)) throw new OpError('baseHeight must be a positive number')
   if (n.cluster !== undefined && !validCluster(n.cluster)) throw new OpError('cluster must be ids joined by "/" (letters, digits, - _; at most 8 levels)')
   for (const k of ['title', 'label', 'text']) if (n[k] !== undefined && typeof n[k] !== 'string') throw new OpError(`${k} must be a string`)
   if (n.natural !== undefined && !(Number.isFinite(n.natural?.w) && Number.isFinite(n.natural?.h) && n.natural.w > 0 && n.natural.h > 0)) throw new OpError('natural must be {w,h} with positive numbers')

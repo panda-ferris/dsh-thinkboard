@@ -198,3 +198,17 @@ test('snap: 间距提示只在发生等间距吸附时显示', () => {
   const far = snapMove(R(170, 0), others, 6)       // 离等间距位置 20,出阈值
   assert.equal(far.gaps.filter((g) => g.axis === 'x').length, 0)
 })
+
+test('summarize: 带出折叠状态与默认高度;旧的 collapsed 字段按 fold:collapsed 呈现;默认状态不多带字段', () => {
+  const b = { id: 'b', title: 't', edges: [], nodes: [
+    { id: 'd', type: 'text', x: 0, y: 0, width: 10, height: 10 },
+    { id: 'c', type: 'text', x: 0, y: 0, width: 10, height: 10, fold: 'collapsed', baseHeight: 300.4 },
+    { id: 'e', type: 'text', x: 0, y: 0, width: 10, height: 10, fold: 'expanded' },
+    { id: 'o', type: 'text', x: 0, y: 0, width: 10, height: 10, collapsed: true, expandedHeight: 480 },
+  ] }
+  const [d, c, e, o] = summarize(b).nodes
+  assert.ok(!('fold' in d) && !('baseHeight' in d))
+  assert.deepEqual([c.fold, c.baseHeight], ['collapsed', 300])
+  assert.equal(e.fold, 'expanded'); assert.ok(!('baseHeight' in e))
+  assert.equal(o.fold, 'collapsed')
+})

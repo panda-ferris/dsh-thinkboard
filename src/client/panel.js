@@ -10,6 +10,7 @@ import { renderPng, download, resolveBackground } from './export.js'
 import { Icon } from './icons.js'
 import { initialImageSize } from '../core/content.js'
 import { DetailPane } from './detail.js'
+import { sideFor, withSide, withoutSide, restorableDetail } from '../core/sidestate.js'
 import { migrateLegacyKeys } from './storage.js'
 import { chipsForSelection, dedupeChips } from './chatref.js'
 import { focusViewport } from '../core/view.js'
@@ -21,6 +22,7 @@ const LS_BOUND = 'dsh.thinkboard.sessions.v1' // { [boardId]: sessionId }
 const LS_LAST = 'dsh.thinkboard.last.v1'
 const LS_CHAT = 'dsh.thinkboard.chat.v1' // { open, width }
 const LS_VIEW = 'dsh.thinkboard.viewport.v1' // { [boardId]: {x,y,k} }
+const LS_SIDE = 'dsh.thinkboard.side.v1' // { [boardId]: {open, tab, detail} }  右栏状态,每个白板各一份
 const LS_LIST = 'dsh.thinkboard.list.v1' // { open }  左侧白板列表的展开状态
 
 const readLS = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } }
@@ -41,6 +43,34 @@ export function Panel(props) {
   const setSide = (patch) => setChat((c) => { const n = { ...c, ...patch }; writeLS(LS_CHAT, n); return n })
   // 打开详情 → 展开右侧并切到详情标签;关闭详情 → 回到对话
   React.useEffect(() => { if (state.detail) setSide({ open: true, tab: 'detail' }); else setChat((c) => (c.tab === 'detail' ? { ...c, tab: 'chat' } : c)) }, [state.detail])
+  // 右栏状态按白板记忆:展开/收起、标签页、详情里正在看的卡片。宽度全局共用,不在此列。
+  // 恢复由"白板加载完成"触发,期间 restoring 为 true,避免把"恢复"本身当成用户操作再存回去。
+  const restoring = React.useRef(false)
+  const sideBoardId = state.board?.id ?? null
+  React.useEffect(() => {
+    if (!sideBoardId || state.loading) return
+    const rec = sideFor(readLS(LS_SIDE, {}), sideBoardId, readLS(LS_CHAT, { open: true }).open !== false)
+    restoring.current = true
+    setChat((c) => ({ ...c, open: rec.open, tab: 'chat' }))
+    const want = restorableDetail(rec, store.getState().board?.nodes)
+    if (want) store.openDetail(want); else store.closeDetail()
+    // 恢复结果与记录不一致(例如记录里的详情卡片已被删除)时,把纠正后的结果写回,
+    // 否则恢复期间禁止保存、之后状态又没有变化,存储里会一直留着指向已不存在卡片的旧记录。
+    const settled = { open: rec.open, tab: want ? 'detail' : 'chat', detail: want }
+    if (rec.tab !== settled.tab || rec.detail !== settled.detail) writeLS(LS_SIDE, withSide(readLS(LS_SIDE, {}), sideBoardId, settled))
+    // 让上面的状态更新先落定,再放开保存;否则中间态("先回对话标签")会被存下来覆盖真实记录
+    const t0 = setTimeout(() => { restoring.current = false }, 0)
+    return () => clearTimeout(t0)
+  }, [sideBoardId, state.loading])
+  React.useEffect(() => {
+    if (!sideBoardId || state.loading || restoring.current) return
+    const tab = chat.tab === 'detail' && state.detail ? 'detail' : 'chat'
+    const m = readLS(LS_SIDE, {})
+    const cur = sideFor(m, sideBoardId, true)
+    const next = { open: chat.open, tab, detail: tab === 'detail' ? state.detail : null }
+    if (cur.open === next.open && cur.tab === next.tab && cur.detail === next.detail && Object.prototype.hasOwnProperty.call(m, sideBoardId)) return
+    writeLS(LS_SIDE, withSide(m, sideBoardId, next))
+  }, [sideBoardId, state.loading, chat.open, chat.tab, state.detail])
   // 点击输入框里的引用对象 → 聚焦到白板里对应的元素(必要时先切换白板)。
   // 请求可能先于面板/白板就绪,所以:订阅 + 白板加载完成后各检查一次。
   const [focusNote, setFocusNote] = React.useState(null)
@@ -168,7 +198,7 @@ export function Panel(props) {
       items: [
         { label: t('menu.rename'), run: () => setRenaming(menu.id) },
         { label: t('menu.duplicate'), run: () => act(async () => { const r = await transport.duplicate(menu.id); open(r.board.id) }) },
-        { label: t('menu.delete'), danger: true, run: () => { if (confirm(t('menu.deleteConfirm'))) act(async () => { await transport.trash(menu.id); if (current?.id === menu.id) { const rest = (await transport.list()); rest[0] ? open(rest[0].id) : location.reload() } }) } },
+        { label: t('menu.delete'), danger: true, run: () => { if (confirm(t('menu.deleteConfirm'))) act(async () => { await transport.trash(menu.id); writeLS(LS_SIDE, withoutSide(readLS(LS_SIDE, {}), menu.id)); if (current?.id === menu.id) { const rest = (await transport.list()); rest[0] ? open(rest[0].id) : location.reload() } }) } },
       ],
     }) : null,
   )

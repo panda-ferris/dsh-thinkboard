@@ -33,6 +33,10 @@ export const ICONS = {
   caption: () => svg(h('rect', { x: 2, y: 2.5, width: 12, height: 8, rx: 1.5 }), line(4.5, 13.2, 11.5, 13.2)),
   html: () => svg(h('path', { d: 'M5.5 4.5L2 8l3.5 3.5' }), h('path', { d: 'M10.5 4.5L14 8l-3.5 3.5' }), line(9, 3, 7, 13)),
   detail: () => svg(h('rect', { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }), line(9.5, 2.5, 9.5, 13.5), line(4, 6, 7.5, 6), line(4, 8.5, 7.5, 8.5)),
+  // 三种高度状态:折叠(一条矮条)/ 默认(中等高度)/ 展开(贴合内容,带上下箭头)
+  'fold-collapsed': () => svg(h('rect', { x: 2.5, y: 5.5, width: 11, height: 5, rx: 1.2 }), line(5, 8, 11, 8)),
+  'fold-default': () => svg(h('rect', { x: 2.5, y: 3, width: 11, height: 10, rx: 1.2 }), line(5, 6.5, 11, 6.5), line(5, 9.5, 9, 9.5)),
+  'fold-expanded': () => svg(h('path', { d: 'M8 1.8v3M6.2 3.6L8 1.8l1.8 1.8' }), h('rect', { x: 2.5, y: 5.5, width: 11, height: 5, rx: 1.2 }), h('path', { d: 'M8 14.2v-3M6.2 12.4L8 14.2l1.8-1.8' })),
   fold: () => svg(h('path', { d: 'M4 6.5L8 3l4 3.5' }), h('path', { d: 'M4 13L8 9.5l4 3.5' })),
   unfold: () => svg(h('path', { d: 'M4 3l4 3.5L12 3' }), h('path', { d: 'M4 9.5L8 13l4-3.5' })),
   'route-curve': () => svg(h('path', { d: 'M2.5 13C2.5 6 13.5 10 13.5 3' }), h('circle', { cx: 13.5, cy: 3, r: 1, fill: 'currentColor' })),

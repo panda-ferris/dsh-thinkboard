@@ -130,6 +130,74 @@ try {
   // 空白状态:没有白板时顶栏无标题可改
   await ev(`window.__panel.db.clear()`)
 
+  console.log('右栏状态按白板记忆:展开/收起、详情卡片')
+  { const SIDE = 'dsh.thinkboard.side.v1'
+    // 与 mount() 一样:重建白板数据后挂载真实 Panel(Panel 挂载时才会读本机存储并恢复上次的白板)
+    const mk2 = async (beforeMount = '') => { await ev(`(()=>{const p=window.__panel;p.db.clear();p.mk('b1','白板甲',[{id:'a1',type:'text',x:100,y:100,width:200,height:100,title:'甲一',text:'甲的卡片一'},{id:'a2',type:'text',x:400,y:100,width:200,height:100,title:'甲二',text:'甲的卡片二'}]);p.mk('b2','白板乙',[{id:'z1',type:'text',x:100,y:100,width:200,height:100,title:'乙一',text:'乙的卡片'}]);${beforeMount};window.__mountPanel()})()`); await sleep(900) }
+    const reenter = async (beforeMount = '') => { await ev(`sessionStorage.__keep='1'`); await load(url); await mk2(beforeMount) }
+    const side = () => ev(`(()=>({open:!!document.querySelector('.wb-chat'),tab:document.querySelector('.wb-side-tab.is-on')?.textContent||null,detail:window.__pstore.getState().detail,board:window.__pstore.getState().board?.id,width:document.querySelector('.wb-chat')?.style.width||null}))()`)
+    const stored = () => ev(`JSON.parse(localStorage.getItem('${SIDE}')||'null')`)
+    const openBoard = async (name) => { await ev(`[...document.querySelectorAll('.wb-list-item')].find(e=>e.textContent.includes(${JSON.stringify(name)})).click()`); await sleep(600) }
+    const setSide = (open) => ev(`(()=>{const b=[...document.querySelectorAll('.wb-topbar button, .wb-btn')].find(x=>x.textContent==='side.toggle');if(!b)throw new Error('找不到侧栏开关按钮');const on=!!document.querySelector('.wb-chat');if(on!==${open})b.click()})()`)
+    await ev(`localStorage.clear()`); await ev(`sessionStorage.__keep=''`); await load(url); await mk2()
+
+    // ---- 初始:全新环境 ----
+    { const s0 = await side(); check('全新环境:右栏默认展开,在对话标签,没有详情', s0.open && s0.detail === null && s0.board === 'b1', JSON.stringify(s0)) }
+    // ---- 在白板甲里打开详情;重新进入后应还在 ----
+    await ev(`window.__pstore.select(['a2']); window.__pstore.openDetail('a2')`); await sleep(500)
+    { const s1 = await side(); check('打开详情:右栏展开、详情是 a2、当前标签是"详情"', s1.open && s1.detail === 'a2' && s1.tab === 'detail.tab', JSON.stringify(s1)) }
+    check('打开详情后记录写入存储(本白板:详情、a2)', (await stored())?.b1?.tab === 'detail' && (await stored())?.b1?.detail === 'a2', JSON.stringify(await stored()))
+    await reenter()
+    { const s2 = await side(); check('重新进入白板:右栏仍展开、仍在详情标签、详情仍是 a2', s2.open && s2.board === 'b1' && s2.detail === 'a2', JSON.stringify(s2)) }
+    check('  …详情面板里显示的是 a2 的内容', await ev(`document.querySelector('.wb-detail-title')?.value`) === '甲二')
+
+    // ---- 每个白板各记一份 ----
+    await openBoard('白板乙')
+    { const s3 = await side(); check('切到另一个白板:它没有自己的记录,不继承甲的详情(详情为空、回到对话标签)', s3.board === 'b2' && s3.detail === null, JSON.stringify(s3)) }
+    await setSide(false); await sleep(300)
+    check('在乙里收起右栏:乙的记录是收起', (await stored())?.b2?.open === false, JSON.stringify(await stored()))
+    check('  …甲的记录没被改动(仍是展开 + 详情 a2)', (await stored())?.b1?.open === true && (await stored())?.b1?.detail === 'a2', JSON.stringify(await stored()))
+    await openBoard('白板甲')
+    { const s4 = await side(); check('切回甲:恢复甲的状态(右栏展开、详情 a2),不受乙的收起影响', s4.open && s4.board === 'b1' && s4.detail === 'a2', JSON.stringify(s4)) }
+    await openBoard('白板乙')
+    { const s5 = await side(); check('再切回乙:恢复乙的状态(右栏收起)', !s5.open && s5.board === 'b2', JSON.stringify(s5)) }
+    await reenter()
+    { const s6 = await side(); check('重新进入(上次停在乙,乙收起):右栏收起', s6.board === 'b2' && !s6.open, JSON.stringify(s6)) }
+    await openBoard('白板甲')
+    { const s7 = await side(); check('重新进入后切到甲:仍恢复甲的详情', s7.board === 'b1' && s7.open && s7.detail === 'a2', JSON.stringify(s7)) }
+
+    // ---- 关闭详情后记录更新为对话标签 ----
+    await ev(`window.__pstore.closeDetail()`); await sleep(400)
+    check('关闭详情:记录更新为对话标签、没有详情', (await stored())?.b1?.tab === 'chat' && (await stored())?.b1?.detail === null, JSON.stringify((await stored())?.b1))
+    await reenter()
+    { const s8 = await side(); check('关闭详情后重新进入:不再出现详情', s8.board === 'b1' && s8.detail === null && s8.open, JSON.stringify(s8)) }
+
+    // ---- 详情里的卡片被删除 → 回到对话标签,不报错 ----
+    await ev(`window.__pstore.select(['a1']); window.__pstore.openDetail('a1')`); await sleep(400)
+    // 模拟"离开期间卡片被删除":重新进入时白板里已经没有 a1(必须在数据重建之后、面板挂载之前删,否则会被重建覆盖)
+    await reenter(`(()=>{const e=p.db.get('b1');e.board={...e.board,nodes:e.board.nodes.filter(n=>n.id!=='a1')}})()`)
+    { const s9 = await side(); check('记录里的详情卡片已被删除:回到对话标签,不报错', s9.board === 'b1' && s9.detail === null && s9.open && errors.length === 0 && await ev(`!window.__panel.db.get('b1').board.nodes.some(n=>n.id==='a1')`), JSON.stringify([s9, errors])) }
+    // 删除后详情为空,并且记录被纠正
+    check('  …记录被纠正为对话标签(不会反复尝试恢复已不存在的卡片)', (await stored())?.b1?.detail === null && (await stored())?.b1?.tab === 'chat', JSON.stringify((await stored())?.b1))
+
+    // ---- 宽度全局共用:不随白板变 ----
+    await ev(`localStorage.setItem('dsh.thinkboard.chat.v1', JSON.stringify({open:true,width:520}))`); await reenter()
+    { const w1 = (await side()).width; await openBoard('白板乙'); await setSide(true); await sleep(300); const w2 = (await side()).width
+      check('右栏宽度是全局共用的:换白板宽度不变(520)', w1 === '520px' && w2 === '520px', JSON.stringify([w1, w2])) }
+
+    // ---- 白板被删除:记录被清理 ----
+    await ev(`window.confirm=()=>true`)
+    await ev(`[...document.querySelectorAll('.wb-list-item')].find(e=>e.textContent.includes('白板乙')).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:50,clientY:50}))`); await sleep(200)
+    await ev(`[...document.querySelectorAll('.wb-menu-item')].find(b=>b.textContent==='menu.delete').click()`); await sleep(600)
+    check('删除白板:它的右栏记录被一并清理', !(await stored()) || !('b2' in (await stored())), JSON.stringify(await stored()))
+
+    // ---- 存储损坏 / 异常形状 ----
+    for (const [name, raw] of [['不是 JSON', '{坏的'], ['是数组', '[1,2]'], ['是字符串', '"x"'], ['记录字段类型全错', '{"b1":{"open":"yes","tab":5,"detail":{}}}'], ['记录是 null', '{"b1":null}'], ['详情 id 超长', JSON.stringify({ b1: { open: true, tab: 'detail', detail: 'x'.repeat(500) } })]]) {
+      await mk2(); await ev(`localStorage.setItem('${SIDE}', ${JSON.stringify(raw)})`); await reenter()
+      const sx = await side(); check(`存储${name}:回到默认(右栏展开、无详情),不报错`, sx.open && sx.detail === null && errors.length === 0, JSON.stringify([sx, errors]))
+    }
+    check('页面没有 React 或未捕获错误', errors.length === 0, JSON.stringify(errors)) }
+
   console.log('对话引用:以对象(chip)加入输入框 / 点击聚焦')
   { await ev(`localStorage.clear()`); await load(url)
     // 两块白板;b1 绑定会话 S1
@@ -215,6 +283,11 @@ try {
   }
 
   check('页面无未处理错误', errors.length === 0, JSON.stringify(errors))
+} catch (e) {
+  // 没有这段时,抛出的异常会被 finally 吞掉:只打印"N/N 通过"并以 0 退出,等于异常时报告成功
+  console.error('测试异常中断:', e.message)
+  console.error(String(e.stack || '').split('\n').slice(0, 6).join('\n'))
+  results.push({ name: '测试运行中断(异常)', ok: false })
 } finally {
   const fails = results.filter((r) => !r.ok)
   console.log(`\n${results.length - fails.length}/${results.length} 通过`)

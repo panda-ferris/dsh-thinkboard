@@ -112,9 +112,35 @@ test('tools: arrange collapse/expand 折叠长文本卡片,只作用于文字卡
   assert.equal(g.nodes.find((n) => n.id === 'g').height, 600)
   const again = JSON.parse((await edit.execute({ action: 'arrange', board, kind: 'collapse', ids: ['a'] })).result)
   assert.equal(again.changed, false)
+  const folded = g.nodes.find((n) => n.id === 'a')
+  assert.equal(folded.fold, 'collapsed'); assert.equal(folded.baseHeight, 600)
   await edit.execute({ action: 'arrange', board, kind: 'expand', ids: ['a'] })
   g = JSON.parse((await read.execute({ board })).result)
-  assert.equal(g.nodes.find((n) => n.id === 'a').height, 600)
+  const back = g.nodes.find((n) => n.id === 'a')
+  assert.equal(back.height, 600); assert.ok(!('fold' in back) && !('baseHeight' in back))
+  const noop = JSON.parse((await edit.execute({ action: 'arrange', board, kind: 'expand', ids: ['a'] })).result)
+  assert.equal(noop.changed, false)          // 已是默认状态,expand 不改动
+})
+
+test('tools: 旧版本写入的 collapsed/expandedHeight 卡片可被 expand 恢复,字段清干净', async () => {
+  const reg = await tools()
+  const edit = reg.get('thinkboard_edit'), read = reg.get('thinkboard_read')
+  const { board } = JSON.parse((await edit.execute({ action: 'create' })).result)
+  await edit.execute({ board, ops: [{ op: 'addNode', node: { id: 'o', type: 'text', x: 0, y: 0, height: 112, text: 't', collapsed: true, expandedHeight: 420 } }] })
+  await edit.execute({ action: 'arrange', board, kind: 'expand', ids: ['o'] })
+  const n = JSON.parse((await read.execute({ board })).result).nodes.find((x) => x.id === 'o')
+  assert.equal(n.height, 420); assert.ok(!('collapsed' in n) && !('expandedHeight' in n) && !('fold' in n))
+})
+
+test('tools: 直接设置 fold / baseHeight 会被校验', async () => {
+  const reg = await tools()
+  const edit = reg.get('thinkboard_edit')
+  const { board } = JSON.parse((await edit.execute({ action: 'create' })).result)
+  await edit.execute({ board, ops: [{ op: 'addNode', node: { id: 'a', type: 'text', x: 0, y: 0, text: 't' } }] })
+  await assert.rejects(() => edit.execute({ board, ops: [{ op: 'updateNode', id: 'a', patch: { fold: 'wide' } }] }), /fold/)
+  await assert.rejects(() => edit.execute({ board, ops: [{ op: 'updateNode', id: 'a', patch: { baseHeight: -3 } }] }), /baseHeight/)
+  const ok = await edit.execute({ board, ops: [{ op: 'updateNode', id: 'a', patch: { fold: 'collapsed', baseHeight: 300, height: 112 } }] })
+  assert.ok(ok)
 })
 
 test('tools: agent 画流程图(图形 + 折线 + 端点),非法参数得到明确报错', async () => {

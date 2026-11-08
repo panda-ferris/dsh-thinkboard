@@ -90,32 +90,155 @@ test('image: 扩展名判断不区分大小写', () => {
   assert.ok(isImageName('A.PNG') && isImageName('x.webp') && !isImageName('x.exe') && !isImageName(''))
 })
 
-import { COLLAPSED_HEIGHT, collapsePatch, expandPatch, togglePatch } from '../src/core/content.js'
+import { COLLAPSED_HEIGHT, MAX_CARD_HEIGHT, foldState, defaultHeightOf, collapsePatch, expandPatch, restorePatch, setFoldPatch, resizePatch, quickTogglePatch, refitPatch, togglePatch } from '../src/core/content.js'
 import { createBoard } from '../src/core/model.js'
-import { applyOps } from '../src/core/ops.js'
+import { applyOps, OpError } from '../src/core/ops.js'
 
-test('collapse: 折叠记住原高度并缩到固定高度;展开恢复', () => {
-  const n = { id: 'a', type: 'text', height: 500 }
-  assert.deepEqual(collapsePatch(n), { collapsed: true, expandedHeight: 500, height: COLLAPSED_HEIGHT })
-  const folded = { ...n, collapsed: true, expandedHeight: 500, height: COLLAPSED_HEIGHT }
-  assert.deepEqual(expandPatch(folded), { collapsed: null, expandedHeight: null, height: 500 })
-  assert.equal(collapsePatch(folded), null)
-  assert.equal(expandPatch(n), null)
+const card = (extra = {}) => ({ id: 'a', type: 'text', x: 10, y: 20, width: 300, height: 500, ...extra })
+const apply = (b, node, patch) => applyOps(b, [{ op: 'updateNode', id: node.id, patch }]).board
+const start = (n) => applyOps(createBoard({ id: 'b' }), [{ op: 'addNode', node: n }]).board
+
+test('foldState: 缺省是默认状态;识别新旧两种写法;非法值按默认', () => {
+  assert.deepEqual(foldState(card()), { fold: 'default', base: null })
+  assert.deepEqual(foldState(card({ fold: 'collapsed', baseHeight: 500 })), { fold: 'collapsed', base: 500 })
+  assert.deepEqual(foldState(card({ fold: 'expanded', baseHeight: 300 })), { fold: 'expanded', base: 300 })
+  assert.deepEqual(foldState(card({ collapsed: true, expandedHeight: 480 })), { fold: 'collapsed', base: 480 })   // 旧数据
+  for (const bad of [{ fold: 'x' }, { fold: 5 }, { fold: null }, { collapsed: 'yes' }, { collapsed: false }]) assert.equal(foldState(card(bad)).fold, 'default', JSON.stringify(bad))
+  for (const bad of [0, -3, NaN, 'a', null]) assert.equal(foldState(card({ baseHeight: bad })).base, null, String(bad))
+  assert.deepEqual(foldState(null), { fold: 'default', base: null })
 })
 
-test('collapse: 本来就很矮的卡片折叠后高度不变', () => {
-  assert.deepEqual(collapsePatch({ height: 80 }), { collapsed: true, expandedHeight: 80 })
+test('折叠:记住默认高度并缩到固定高度;已折叠返回 null', () => {
+  const p = collapsePatch(card())
+  assert.deepEqual(p, { fold: 'collapsed', baseHeight: 500, collapsed: null, expandedHeight: null, height: COLLAPSED_HEIGHT })
+  assert.equal(collapsePatch(card({ fold: 'collapsed', baseHeight: 500, height: COLLAPSED_HEIGHT })), null)
 })
 
-test('collapse: 丢失原高度时展开有兜底', () => {
-  assert.equal(expandPatch({ collapsed: true, height: COLLAPSED_HEIGHT }).height, 240)
+test('折叠:本来就矮的卡片不会被撑高,高度不变', () => {
+  const p = collapsePatch(card({ height: 80 }))
+  assert.equal(p.height, 80); assert.equal(p.baseHeight, 80); assert.equal(p.fold, 'collapsed')
 })
 
-test('collapse: 经 applyOps 往返,字段被清理干净', () => {
-  let b = applyOps(createBoard({ id: 'b' }), [{ op: 'addNode', node: { id: 'a', type: 'text', x: 0, y: 0, height: 400 } }]).board
-  b = applyOps(b, [{ op: 'updateNode', id: 'a', patch: togglePatch(b.nodes[0]) }]).board
-  assert.equal(b.nodes[0].height, COLLAPSED_HEIGHT)
-  b = applyOps(b, [{ op: 'updateNode', id: 'a', patch: togglePatch(b.nodes[0]) }]).board
-  assert.equal(b.nodes[0].height, 400)
-  assert.ok(!('collapsed' in b.nodes[0]) && !('expandedHeight' in b.nodes[0]))
+test('展开:高度 = 内容高度,并记住默认高度;量不出内容高度时不改动', () => {
+  assert.deepEqual(expandPatch(card(), 820), { fold: 'expanded', baseHeight: 500, collapsed: null, expandedHeight: null, height: 820 })
+  for (const bad of [undefined, null, NaN, 0, -5, '700']) assert.equal(expandPatch(card(), bad), null, String(bad))
+})
+
+test('展开:内容高度被夹在合法范围内', () => {
+  assert.equal(expandPatch(card(), 10).height, 40); assert.equal(expandPatch(card(), 1e9).height, MAX_CARD_HEIGHT)
+  assert.equal(expandPatch(card(), 600.4).height, 600)
+})
+
+test('展开:已经展开且高度已贴合,返回 null;内容变了则重新量', () => {
+  const n = card({ fold: 'expanded', baseHeight: 500, height: 700 })
+  assert.equal(expandPatch(n, 700), null); assert.equal(expandPatch(n, 900).height, 900)
+  assert.equal(expandPatch(n, 900).baseHeight, 500)           // 默认高度不因重新贴合而改变
+})
+
+test('折叠 → 展开:默认高度保持不变(折叠时记下的值)', () => {
+  const folded = card({ fold: 'collapsed', baseHeight: 500, height: COLLAPSED_HEIGHT })
+  assert.equal(expandPatch(folded, 760).baseHeight, 500)
+})
+
+test('回到默认:高度恢复为记住的默认高度,清掉所有折叠字段;已是默认返回 null', () => {
+  assert.deepEqual(restorePatch(card({ fold: 'collapsed', baseHeight: 500, height: 112 })), { fold: null, baseHeight: null, collapsed: null, expandedHeight: null, height: 500 })
+  assert.deepEqual(restorePatch(card({ fold: 'expanded', baseHeight: 320, height: 900 })).height, 320)
+  assert.equal(restorePatch(card()), null)
+})
+
+test('丢失默认高度时有兜底(不会变成 0 或 NaN)', () => {
+  assert.equal(restorePatch(card({ fold: 'collapsed', height: COLLAPSED_HEIGHT })).height, 240)
+  assert.equal(defaultHeightOf(card({ fold: 'expanded', height: 900 })), 900)
+})
+
+test('手动拖拽高度 = 重设默认高度:在折叠/展开状态下退出该状态,高度就是拖到的值', () => {
+  const rect = { x: 5.4, y: 6.6, width: 321.2, height: 410.7 }
+  assert.deepEqual(resizePatch(card({ fold: 'collapsed', baseHeight: 500, height: 112 }), rect), { x: 5, y: 7, width: 321, height: 411, fold: null, baseHeight: null, collapsed: null, expandedHeight: null })
+  assert.deepEqual(resizePatch(card({ fold: 'expanded', baseHeight: 500, height: 900 }), rect).fold, null)
+})
+
+test('只改宽度/位置(高度不变)的拖拽:折叠、展开状态保持不变', () => {
+  const folded = card({ fold: 'collapsed', baseHeight: 500, height: COLLAPSED_HEIGHT })
+  assert.deepEqual(resizePatch(folded, { x: 0, y: 0, width: 420, height: COLLAPSED_HEIGHT }), { x: 0, y: 0, width: 420, height: COLLAPSED_HEIGHT })
+  const expanded = card({ fold: 'expanded', baseHeight: 500, height: 900 })
+  assert.equal('fold' in resizePatch(expanded, { x: 0, y: 0, width: 420, height: 900 }), false)
+  assert.equal(resizePatch(expanded, { x: 0, y: 0, width: 420, height: 899.6 }).fold, undefined)   // 取整后高度没变
+  assert.equal(resizePatch(expanded, { x: 0, y: 0, width: 420, height: 905 }).fold, null)            // 高度变了才退出
+})
+
+test('手动拖拽高度:默认状态只写位置与尺寸,不多带字段;旧字段会被清掉', () => {
+  assert.deepEqual(resizePatch(card(), { x: 1, y: 2, width: 3, height: 400 }), { x: 1, y: 2, width: 3, height: 400 })
+  assert.equal(resizePatch(card({ collapsed: true, expandedHeight: 500, height: 112 }), { x: 1, y: 2, width: 3, height: 400 }).collapsed, null)
+})
+
+test('手动拖拽高度被夹在合法范围内', () => {
+  assert.equal(resizePatch(card(), { x: 0, y: 0, width: 10, height: 1 }).height, 40)
+  assert.equal(resizePatch(card(), { x: 0, y: 0, width: 10, height: 1e9 }).height, MAX_CARD_HEIGHT)
+})
+
+test('"拉高后又跳回旧的最高值"的回归:折叠→拖拽拉高→再展开/折叠,以拖拽的值为默认', () => {
+  let b = start(card({ height: 500 }))
+  b = apply(b, b.nodes[0], collapsePatch(b.nodes[0]))                                   // 折叠,默认高度记为 500
+  b = apply(b, b.nodes[0], resizePatch(b.nodes[0], { x: 10, y: 20, width: 300, height: 700 }))   // 拖拽拉到 700
+  assert.equal(b.nodes[0].height, 700); assert.equal(foldState(b.nodes[0]).fold, 'default')
+  b = apply(b, b.nodes[0], collapsePatch(b.nodes[0]))                                   // 再折叠
+  assert.equal(b.nodes[0].baseHeight, 700, '默认高度应是最近一次手动设置的 700,而不是更早的 500')
+  b = apply(b, b.nodes[0], restorePatch(b.nodes[0]))
+  assert.equal(b.nodes[0].height, 700)
+})
+
+test('refitPatch: 只有展开状态才贴合;差别在 2px 内不动;不改默认高度', () => {
+  assert.equal(refitPatch(card(), 900), null)
+  assert.equal(refitPatch(card({ fold: 'collapsed', baseHeight: 500, height: 112 }), 900), null)
+  const n = card({ fold: 'expanded', baseHeight: 500, height: 700 })
+  assert.deepEqual(refitPatch(n, 820), { height: 820 }); assert.equal(refitPatch(n, 701), null); assert.equal(refitPatch(n, 698), null)
+  for (const bad of [NaN, 0, -1, undefined]) assert.equal(refitPatch(n, bad), null)
+})
+
+test('quickTogglePatch: 默认→展开;展开/折叠→回到默认', () => {
+  assert.equal(quickTogglePatch(card(), 800).fold, 'expanded')
+  assert.equal(quickTogglePatch(card({ fold: 'expanded', baseHeight: 500, height: 800 }), 800).height, 500)
+  assert.equal(quickTogglePatch(card({ fold: 'collapsed', baseHeight: 500, height: 112 }), 800).height, 500)
+})
+
+test('setFoldPatch: 按目标状态分发', () => {
+  assert.equal(setFoldPatch(card(), 'collapsed').fold, 'collapsed'); assert.equal(setFoldPatch(card(), 'expanded', 800).fold, 'expanded')
+  assert.equal(setFoldPatch(card({ fold: 'collapsed', baseHeight: 500, height: 112 }), 'default').height, 500); assert.equal(setFoldPatch(card(), 'default'), null)
+  assert.equal(setFoldPatch(card(), 'bogus'), null)
+})
+
+test('togglePatch(agent 用):折叠 ↔ 恢复', () => {
+  assert.equal(togglePatch(card()).fold, 'collapsed')
+  assert.equal(togglePatch(card({ fold: 'collapsed', baseHeight: 500, height: 112 })).height, 500)
+})
+
+test('旧数据兼容:旧的 collapsed/expandedHeight 卡片可以被展开/恢复,且恢复后旧字段清干净', () => {
+  let b = start(card({ collapsed: true, expandedHeight: 480, height: COLLAPSED_HEIGHT }))
+  const p = restorePatch(b.nodes[0]); assert.equal(p.height, 480)
+  b = apply(b, b.nodes[0], p)
+  assert.ok(!('collapsed' in b.nodes[0]) && !('expandedHeight' in b.nodes[0]) && !('fold' in b.nodes[0]) && !('baseHeight' in b.nodes[0]))
+})
+
+test('经 applyOps 往返:折叠/展开/恢复后字段被清理干净,不残留 null', () => {
+  let b = start(card({ height: 400 }))
+  b = apply(b, b.nodes[0], collapsePatch(b.nodes[0])); assert.equal(b.nodes[0].height, COLLAPSED_HEIGHT); assert.equal(b.nodes[0].fold, 'collapsed')
+  b = apply(b, b.nodes[0], expandPatch(b.nodes[0], 650)); assert.equal(b.nodes[0].height, 650); assert.equal(b.nodes[0].baseHeight, 400)
+  b = apply(b, b.nodes[0], restorePatch(b.nodes[0])); assert.equal(b.nodes[0].height, 400)
+  assert.ok(!('fold' in b.nodes[0]) && !('baseHeight' in b.nodes[0]) && !('collapsed' in b.nodes[0]) && !('expandedHeight' in b.nodes[0]))
+})
+
+test('ops 校验:fold 只能是 collapsed/expanded;baseHeight 必须是正数', () => {
+  const b = start(card())
+  for (const bad of ['default', 'x', 1, true]) assert.throws(() => apply(b, b.nodes[0], { fold: bad }), OpError, String(bad))
+  for (const bad of [0, -1, NaN, 'a', Infinity]) assert.throws(() => apply(b, b.nodes[0], { baseHeight: bad }), OpError, String(bad))
+  assert.doesNotThrow(() => apply(b, b.nodes[0], { fold: 'collapsed', baseHeight: 300 }))
+  assert.doesNotThrow(() => apply(b, b.nodes[0], { fold: null, baseHeight: null }))        // null = 清除
+})
+
+test('撤销:折叠/展开/拖拽各自一步还原(逆操作取应用前的字段)', () => {
+  const inv = (before, patch) => { const n = before.nodes[0]; const r = {}; for (const k of Object.keys(patch)) r[k] = k in n ? n[k] : null; return r }
+  let b = start(card({ height: 500 }))
+  const p = collapsePatch(b.nodes[0]); const undo = inv(b, p)
+  b = apply(b, b.nodes[0], p); b = apply(b, b.nodes[0], undo)
+  assert.equal(b.nodes[0].height, 500); assert.ok(!('fold' in b.nodes[0]) && !('baseHeight' in b.nodes[0]))
 })

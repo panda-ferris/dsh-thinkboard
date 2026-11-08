@@ -51,7 +51,7 @@ export function registerTools(ctx, service) {
       'Edit a whiteboard with a batch of operations, applied atomically (if any op is invalid nothing changes). ' +
       'Use action "create" to make a new board first. Use action "add_image" with `path` (an absolute image path on this machine: png/jpg/gif/webp/svg, max 20MB) to put an image card on the board; optional caption, title, x, y, width, height, place. For layout use action "arrange" with `kind`: ' +
       '"align" {ids, mode: left|hcenter|right|top|vcenter|bottom}, "distribute" {ids, axis: x|y} (needs 3+), "fit" {groupId} (resize a group to hug its cards), ' +
-      '"wrap" {ids, color?} (put cards into a new frame), "collapse"/"expand" {ids} (fold long text cards to a short preview, or restore them), ' +
+      '"wrap" {ids, color?} (put cards into a new frame), "collapse"/"expand" {ids} (text cards have three height states: default = the height last set by hand, collapsed = a short fixed preview, expanded = fit to content; "collapse" folds a card to the preview, "expand" returns it to its default height — fitting to content needs a browser to measure, so the user does that in the UI. The `fold` field ("collapsed"|"expanded", absent when default) and the `baseHeight` field (the default height) record this; set the `height` field directly to resize and leave fold/baseHeight unset), ' +
       '"group" {ids} (combine 2+ elements so they select/move/scale/copy as one; a node\'s `cluster` field lists its groups outer→inner joined by "/"; unlike a frame a group has no title or background), "ungroup" {ids} (dissolve the outermost group of the given elements). Ops (field `op`): ' +
       'addNode {node:{type:"text"|"html"|"shape"|"group", title?, text?(markdown, for text; a table whose cells contain lists or several paragraphs is stored as a single-line <table> HTML block with <ul>/<ol>/<p> inside the cells — edit it as HTML and keep it on one line; plain tables stay as | a | b | Markdown), html?(for html: shown in a sandbox, scripts and network are blocked, max 200KB), ' +
       'kind?(for shape: rect|roundRect|ellipse|diamond|parallelogram|trapezoid|cylinder|document|terminator|triangle|hexagon|pentagon|star|arrowRight|bubble|text), ' +
@@ -68,7 +68,7 @@ export function registerTools(ctx, service) {
       type: 'object',
       properties: {
         action: { type: 'string', description: '"apply" (default) to run ops; "create" to create a board (uses `title`); "rename" to rename (uses `title`); "arrange" for layout (uses `kind`).' },
-        kind: { type: 'string', description: 'For action "arrange": align | distribute | fit | wrap | collapse | expand.' },
+        kind: { type: 'string', description: 'For action "arrange": align | distribute | fit | wrap | collapse | expand (expand = back to default height).' },
         path: { type: 'string', description: 'For action "add_image": absolute path of a local image file.' },
         caption: { type: 'string', description: 'For action "add_image": optional caption shown under the image.' },
         x: { type: 'number', description: 'For add_image: optional x.' },

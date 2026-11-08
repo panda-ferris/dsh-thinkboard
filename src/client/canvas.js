@@ -17,7 +17,7 @@ import { uid } from '../core/model.js'
 import { NodeView } from './nodes.js'
 import { ContextBar, Minimap, SearchBox, Lightbox, useSize } from './overlays.js'
 import { LeftToolbar } from './lefttool.js'
-import { initialImageSize } from '../core/content.js'
+import { initialImageSize, resizePatch } from '../core/content.js'
 import { COLORS } from './colors.js'
 
 const h = React.createElement
@@ -426,7 +426,7 @@ export function Canvas({ store, state, transport, t, search, setSearch, detailId
     }
     if (d.kind === 'resize') {
       const r = d.result
-      if (r) store.dispatch([{ op: 'updateNode', id: d.id, patch: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } }])
+      if (r) { const cur = board.nodes.find((x) => x.id === d.id); store.dispatch([{ op: 'updateNode', id: d.id, patch: cur && cur.type === 'text' ? resizePatch(cur, r) : { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } }]) }
       setResize(null)
       setPreview(null)
     }

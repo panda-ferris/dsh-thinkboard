@@ -2,7 +2,8 @@
 
 import React from 'react'
 import { LiveMarkdownEditor } from './markdown.js'
-import { togglePatch } from '../core/content.js'
+import { foldState, quickTogglePatch } from '../core/content.js'
+import { measureContentHeight } from './nodes.js'
 
 const h = React.createElement
 
@@ -30,7 +31,7 @@ export function DetailPane({ store, state, t, transport }) {
         onBlur: (e) => { const v = e.currentTarget.value.trim(); if (v !== (n.title || '')) write({ title: v || null }) },
       }),
       h('button', { className: 'wb-btn', title: t('detail.locate'), onClick: locate }, t('detail.locate')),
-      h('button', { className: 'wb-btn', onClick: () => { const p = togglePatch(n); if (p) store.dispatch([{ op: 'updateNode', id: n.id, patch: p }]) } }, n.collapsed ? t('fold.expand') : t('fold.collapse')),
+      h('button', { className: 'wb-btn', onClick: () => { const body = document.querySelector('[data-wb-node="' + n.id + '"] .wb-body'); const p = quickTogglePatch(n, measureContentHeight(body, n)); if (p) store.dispatch([{ op: 'updateNode', id: n.id, patch: p }]) } }, foldState(n).fold === 'default' ? t('fold.expand') : t('fold.restore')),
       h('button', { className: 'wb-btn wb-btn-icon', title: t('detail.close'), 'aria-label': t('detail.close'), onClick: () => store.closeDetail() }, '×')),
     // key=卡片 id:切换卡片时重建编辑器,避免把上一张卡片的内容写到新卡片
     h(LiveMarkdownEditor, { key: n.id, value: n.text || '', placeholder: t('node.textPlaceholder'), onChange: (text) => write({ text }), t, boardId: state.board.id, transport }))

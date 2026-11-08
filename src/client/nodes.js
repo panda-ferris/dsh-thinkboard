@@ -4,7 +4,7 @@ import React from 'react'
 import { MarkdownView, MarkdownEditor } from './markdown.js'
 import { COLORS } from './colors.js'
 import { SIDES, anchorPoint } from '../core/edges.js'
-import { htmlDocument, checkHtmlSize, togglePatch } from '../core/content.js'
+import { htmlDocument, checkHtmlSize, foldState, quickTogglePatch, refitPatch } from '../core/content.js'
 import { ShapeBody } from './shape.js'
 
 const h = React.createElement
@@ -133,7 +133,11 @@ function TextBody({ n, editing, store, t, inDetail, boardId, transport }) {
 
   const bodyRef = React.useRef(null)
   const overflow = useOverflow(bodyRef, [n.text, n.height, n.width, editing])
-  const toggle = (e) => { e.stopPropagation(); const p = togglePatch(n); if (p) store.dispatch([{ op: 'updateNode', id: n.id, patch: p }]) }
+  const { fold } = foldState(n)
+  // 展开状态:内容变了(或宽度变了导致重排)就重新贴合高度。只在非编辑态做——编辑时每个字符都量一次会反复写盘;
+  // 贴合不进撤销历史(history:false):它是内容变化的派生结果,撤销应该撤掉内容的修改本身。
+  useFit(bodyRef, n, editing, store)
+  const toggle = (e) => { e.stopPropagation(); const p = quickTogglePatch(n, measureContentHeight(bodyRef.current, n)); if (p) store.dispatch([{ op: 'updateNode', id: n.id, patch: p }]) }
   const openDetail = (e) => { e.stopPropagation(); store.openDetail?.(n.id) }
   const stop = (e) => e.stopPropagation()
 
@@ -141,13 +145,62 @@ function TextBody({ n, editing, store, t, inDetail, boardId, transport }) {
     h(TitleBar, { n, store, t, always: editing, inputRef: titleRef, draftRef: titleDraft, onEnter: () => bodyFocus.current?.() }),
     editing
       ? h(MarkdownEditor, { initial: n.text || '', placeholder: t('node.textPlaceholder'), onCommit: commit, autofocus: !focusTitleFirst, focusRef: bodyFocus, titleRef, t, boardId, transport })
-      : h('div', { ref: bodyRef, className: 'wb-body' + (n.collapsed ? ' is-collapsed' : '') + (overflow ? ' is-overflow' : ''), 'data-wb-scroll': n.collapsed ? undefined : true },
+      : h('div', { ref: bodyRef, className: 'wb-body' + (fold === 'collapsed' ? ' is-collapsed' : '') + (overflow ? ' is-overflow' : ''), 'data-wb-scroll': fold === 'collapsed' ? undefined : true },
         n.text ? h(MarkdownView, { text: n.text, boardId }) : n.title ? null : h('div', { className: 'wb-placeholder' }, t('node.textPlaceholder'))),
     // 折叠态 / 内容溢出:底部一条操作栏
-    !editing && (n.collapsed || overflow) ? h('div', { className: 'wb-foldbar', 'data-wb-ui': true, onPointerDown: stop },
-      h('button', { className: 'wb-foldbtn', onClick: toggle, title: n.collapsed ? t('fold.expand') : t('fold.collapse') }, n.collapsed ? t('fold.expand') : t('fold.collapse')),
+    // 折叠态 / 展开态 / 内容溢出:底部一条操作栏。快捷按钮含义:折叠或展开中 → 回到默认高度;默认且内容放不下 → 展开
+    !editing && (fold !== 'default' || overflow) ? h('div', { className: 'wb-foldbar', 'data-wb-ui': true, onPointerDown: stop },
+      h('button', { className: 'wb-foldbtn', onClick: toggle, title: fold === 'default' ? t('fold.expand') : t('fold.restore') }, fold === 'default' ? t('fold.expand') : t('fold.restore')),
       h('button', { className: 'wb-foldbtn', onClick: openDetail, title: t('detail.open') }, t('detail.open'))) : null,
     inDetail ? h('div', { className: 'wb-indetail', 'data-wb-ui': true }, t('detail.editingHere')) : null)
+}
+
+/**
+ * 量卡片"内容实际高度"(world 单位,即布局像素,不受画布缩放影响):
+ *   正文内容高 + 正文上下内边距 + 标题占用 + 卡片上下边框。
+ * 量不出来(没有正文节点、数值非法)返回 null,调用方应当不改高度。
+ */
+export function measureContentHeight(bodyEl, node) {
+  const card = bodyEl?.closest?.('.wb-node')
+  const content = bodyEl?.firstElementChild
+  if (!card || !content) return null
+  // 不能直接用内容节点的 offsetHeight:内容的外边距、内边距可能让"刚好放下"所需高度比它多几个像素(实测差 7px,
+  // 展开后仍会留一小截溢出)。做法:临时让正文容器不受 flex 与高度约束,量它的自然高度,再还原样式。
+  // 同步完成、不触发重绘,用户看不到闪动。
+  const prev = { flex: bodyEl.style.flex, height: bodyEl.style.height, maxHeight: bodyEl.style.maxHeight, overflow: bodyEl.style.overflow }
+  bodyEl.style.flex = '0 0 auto'; bodyEl.style.height = 'auto'; bodyEl.style.maxHeight = 'none'; bodyEl.style.overflow = 'visible'
+  const bodyH = bodyEl.offsetHeight                     // 自然高度:内边距 + 内容(含溢出的外边距)
+  Object.assign(bodyEl.style, prev)
+  const title = card.querySelector(':scope > .wb-title')
+  let titleH = 0
+  if (title) { const tcs = getComputedStyle(title); titleH = title.offsetHeight + (parseFloat(tcs.marginTop) || 0) + (parseFloat(tcs.marginBottom) || 0) }
+  const ccs = getComputedStyle(card)
+  const border = (parseFloat(ccs.borderTopWidth) || 0) + (parseFloat(ccs.borderBottomWidth) || 0)
+  const v = bodyH + titleH + border
+  return Number.isFinite(v) && v > 0 ? Math.ceil(v) : null
+}
+
+/** 展开状态下,内容或宽度变化后把高度贴合到内容。不进撤销历史。 */
+function useFit(bodyRef, n, editing, store) {
+  React.useEffect(() => {
+    if (editing || foldState(n).fold !== 'expanded') return
+    const el = bodyRef.current
+    if (!el?.firstElementChild) return
+    let raf = 0
+    const run = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const cur = store.getState().board?.nodes.find((x) => x.id === n.id)
+        if (!cur) return
+        const p = refitPatch(cur, measureContentHeight(bodyRef.current, cur))
+        if (p) store.dispatch([{ op: 'updateNode', id: n.id, patch: p }], { history: false })
+      })
+    }
+    run()
+    const ro = new ResizeObserver(run)
+    ro.observe(el.firstElementChild)
+    return () => { cancelAnimationFrame(raf); ro.disconnect() }
+  }, [n.id, n.text, n.title, n.width, n.fold, editing])
 }
 
 /** 内容是否高于容器(用于显示"展开全文"提示)。 */

@@ -585,18 +585,108 @@ try {
   await sleep(300)
   check('内容溢出的卡片显示"展开全文"操作栏', await ev(`!!document.querySelector('[data-wb-node="L"] .wb-foldbar') && document.querySelector('[data-wb-node="L"] .wb-body').classList.contains('is-overflow')`))
   check('内容不溢出的卡片没有操作栏', await ev(`!document.querySelector('[data-wb-node="S"] .wb-foldbar')`))
-  // 折叠
-  await ev(`[...document.querySelectorAll('[data-wb-node="L"] .wb-foldbtn')].find(b=>b.textContent==='fold.collapse').click()`); await sleep(150)
-  { const n = (await board()).nodes.find((x) => x.id === 'L'); check('折叠:高度变为固定值并记住原高度', n.collapsed === true && n.height === 112 && n.expandedHeight === 260, JSON.stringify([n.height, n.expandedHeight])) }
+  // ---- 折叠 / 默认 / 展开 三种高度状态 ----
+  const L = async () => (await board()).nodes.find((x) => x.id === 'L')
+  const fb = (label) => `[...document.querySelectorAll('[data-wb-node="L"] .wb-foldbtn')].find(b=>b.textContent==='${label}')`
+  check('内容溢出的默认卡片:底部快捷按钮是"展开"', await ev(`!!(${fb('fold.expand')})`))
+  // 选中后悬浮条:三选一开关
+  await ev(`window.__wb.store.select(['L'])`); await sleep(200)
+  check('选中文字卡片:悬浮条有 折叠 | 默认 | 展开 三个开关,当前是"默认"', await ev(`(()=>{const g=[...document.querySelectorAll('.wb-ctxbar [data-fold]')];return g.map(b=>b.dataset.fold+':'+b.getAttribute('aria-pressed')).join(',')})()`) === 'collapsed:false,default:true,expanded:false')
+  // 折叠(悬浮条)
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="collapsed"]').click()`); await sleep(200)
+  { const n = await L(); check('折叠:高度变为固定值并记住默认高度', n.fold === 'collapsed' && n.height === 112 && n.baseHeight === 260 && !('collapsed' in n), JSON.stringify([n.fold, n.height, n.baseHeight])) }
   check('折叠后连线端点跟随新高度', await ev(`(()=>{const d=document.querySelector('.wb-edge-line').getAttribute('d');return /^M 400 156/.test(d)})()`))
-  check('折叠态显示"展开"按钮', await ev(`[...document.querySelectorAll('[data-wb-node="L"] .wb-foldbtn')].some(b=>b.textContent==='fold.expand')`))
-  check('折叠一步可撤销', await (async () => { await ev('window.__wb.store.undo()'); await sleep(120); const n = (await board()).nodes.find((x) => x.id === 'L'); return n.height === 260 && !n.collapsed })())
-  await ev('window.__wb.store.redo()'); await sleep(120)
-  await ev(`[...document.querySelectorAll('[data-wb-node="L"] .wb-foldbtn')].find(b=>b.textContent==='fold.expand').click()`); await sleep(150)
-  { const n = (await board()).nodes.find((x) => x.id === 'L'); check('展开恢复原高度并清理字段', n.height === 260 && !('collapsed' in n) && !('expandedHeight' in n)) }
-  // 悬浮条
+  check('折叠态:悬浮条"折叠"为按下状态,底部按钮变为"恢复默认高度"', await ev(`document.querySelector('.wb-ctxbar [data-fold="collapsed"]').getAttribute('aria-pressed')==='true'`) && await ev(`!!(${fb('fold.restore')})`))
+  check('折叠一步可撤销', await (async () => { await ev('window.__wb.store.undo()'); await sleep(150); const n = await L(); return n.height === 260 && !n.fold && !n.baseHeight })())
+  await ev('window.__wb.store.redo()'); await sleep(150)
+  // 折叠 → 默认
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="default"]').click()`); await sleep(200)
+  { const n = await L(); check('折叠 → 默认:高度恢复为默认高度,折叠字段清干净', n.height === 260 && !('fold' in n) && !('baseHeight' in n), JSON.stringify(n)) }
+  // 默认 → 展开:高度 = 内容高度
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="expanded"]').click()`); await sleep(300)
+  { const n = await L()
+    // 性质检查,不复制实现里的公式:展开后高度应"刚好放下内容"——不溢出,且底部留白很小(< 24px)
+    const fit = await ev(`(()=>{const b=document.querySelector('[data-wb-node="L"] .wb-body');const last=b.firstElementChild.lastElementChild;const bottom=last.getBoundingClientRect().bottom;const room=b.getBoundingClientRect().bottom-bottom;return {溢出:b.scrollHeight-b.clientHeight,底部留白:Math.round(room)}})()`)
+    check('展开:内容完全可见(不溢出),且底部留白很小(刚好贴合,不留大片空白)', n.fold === 'expanded' && n.baseHeight === 260 && n.height > 260 && fit.溢出 <= 1 && fit.底部留白 >= 0 && fit.底部留白 < 24, JSON.stringify({ fold: n.fold, h: n.height, fit })) }
+  check('展开后内容不再溢出:没有滚动条与渐隐遮罩', await ev(`(()=>{const b=document.querySelector('[data-wb-node="L"] .wb-body');return !b.classList.contains('is-overflow')&&b.scrollHeight<=b.clientHeight+2})()`))
+  check('展开态:悬浮条"展开"按下', await ev(`document.querySelector('.wb-ctxbar [data-fold="expanded"]').getAttribute('aria-pressed')==='true'`))
+  // 展开 → 折叠:默认高度仍是 260
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="collapsed"]').click()`); await sleep(200)
+  { const n = await L(); check('展开 → 折叠:默认高度仍是最初的 260(没有被展开的高度覆盖)', n.fold === 'collapsed' && n.baseHeight === 260 && n.height === 112, JSON.stringify([n.fold, n.baseHeight, n.height])) }
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="default"]').click()`); await sleep(200)
+  check('回到默认后高度是 260', (await L()).height === 260)
+
+  // ---- 用户反馈的核心缺陷:手动拉高后,折叠/展开不再回到更早的最高值 ----
+  { // 拖拽起点取手柄的真实位置:手柄中心点被连线锚点盖住了(点击会落到锚点上),所以改用手柄边缘 1/6 处——那里没有锚点
+    const hand = async (n, dy) => { const c = await ev(`(()=>{const q=document.querySelector('[data-wb-node="${n.id ?? 'L'}"] .wb-handle-s').getBoundingClientRect();return {x:q.left+q.width/6,y:q.top+q.height/2}})()`); await mouse('mousePressed', c.x, c.y); for (let i = 1; i <= 6; i++) await mouse('mouseMoved', c.x, c.y + dy * i / 6); await mouse('mouseReleased', c.x, c.y + dy); await sleep(250) }
+    await ev(`window.__wb.store.select(['L'])`); await sleep(150)
+    // 先折叠,默认高度记为 260
+    await ev(`document.querySelector('.wb-ctxbar [data-fold="collapsed"]').click()`); await sleep(200)
+    // 折叠状态下手动往下拉 200px:新高度就是新的默认高度,并退出折叠
+    await hand({ id: 'L' }, 200)
+    { const n = await L(); check('折叠状态下手动拉高:退出折叠,高度就是拖到的值', !('fold' in n) && !('baseHeight' in n) && Math.abs(n.height - (112 + 200)) <= 6, JSON.stringify([n.fold, n.baseHeight, n.height])) }
+    const dragged = (await L()).height
+    await ev(`document.querySelector('.wb-ctxbar [data-fold="collapsed"]').click()`); await sleep(200)
+    check('再折叠:默认高度是刚拖到的值,不是更早的 260 或更高的值', (await L()).baseHeight === dragged, JSON.stringify([await L(), dragged]))
+    await ev(`document.querySelector('.wb-ctxbar [data-fold="default"]').click()`); await sleep(200)
+    check('恢复默认:回到最近一次手动设置的高度', (await L()).height === dragged)
+    // 展开状态下手动拖拽同样重设默认高度
+    await ev(`document.querySelector('.wb-ctxbar [data-fold="expanded"]').click()`); await sleep(300)
+    const expH = (await L()).height
+    await ev(`window.__wb.store.setViewport({x:60,y:30,k:0.5})`); await sleep(300)     // 展开后卡片高过窗口,缩小画布让南向手柄入镜
+    await hand({ id: 'L' }, -150 * 0.5); await sleep(300)           // 屏幕上移动 75px = 画布 150 个单位(缩放 0.5)
+    { const n = await L(); check('展开状态下手动拖拽:退出展开,不再自动贴合内容(高度就是拖到的值)', !('fold' in n) && Math.abs(n.height - (expH - 150)) <= 8, JSON.stringify([n.fold, n.height, expH])) }
+    await sleep(500)
+    check('  …之后高度保持不变(没有被自动贴合改回去)', Math.abs((await L()).height - (expH - 150)) <= 8)
+    await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(200) }
+  // 只改宽度不改高度:折叠状态保持
   await ev(`window.__wb.store.select(['L'])`); await sleep(150)
-  check('选中文字卡片:悬浮条有 详情 / 折叠', await ev(`!!document.querySelector('.wb-ctxbar button[title="detail.open"]') && !!document.querySelector('.wb-ctxbar button[title="fold.collapse"]')`))
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="collapsed"]').click()`); await sleep(200)
+  { const c = await ev(`(()=>{const q=document.querySelector('[data-wb-node="L"] .wb-handle-e').getBoundingClientRect();return {x:q.left+q.width/2,y:q.top+q.height/6}})()`); const hx = c.x, hy = c.y
+    await mouse('mousePressed', hx, hy); for (let i = 1; i <= 5; i++) await mouse('mouseMoved', hx + 12 * i, hy); await mouse('mouseReleased', hx + 60, hy); await sleep(250)
+    const n = await L(); check('折叠状态下只拉宽:仍然折叠,高度不变', n.fold === 'collapsed' && n.height === 112 && n.width > 300, JSON.stringify([n.fold, n.height, n.width])) }
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="default"]').click()`); await sleep(200)
+
+  // ---- 展开状态下内容变化自动贴合,且不进撤销 ----
+  const defaultBeforeExpand = (await L()).height        // 此前手动拉高后的默认高度(新语义:最近一次手动设置的高度)
+  { await ev(`document.querySelector('.wb-ctxbar [data-fold="expanded"]').click()`); await sleep(300)
+    const h0 = (await L()).height
+    await ev(`window.__wb.store.dispatch([{op:'updateNode',id:'L',patch:{text:${JSON.stringify(Array.from({ length: 70 }, (_, i) => `- 新的第 ${i + 1} 行`).join('\n'))}}}])`); await sleep(700)
+    const n = await L()
+    check('展开状态下内容变长:高度自动贴合新内容(变高)', n.fold === 'expanded' && n.height > h0 + 100, JSON.stringify([h0, n.height]))
+    check('  …默认高度 baseHeight 不被贴合改动', n.baseHeight === (await L()).baseHeight && n.baseHeight > 0)
+    await ev(`window.__wb.store.dispatch([{op:'updateNode',id:'L',patch:{text:'只剩一行'}}])`); await sleep(700)
+    const n2 = await L(); check('内容变短:高度自动缩回贴合', n2.fold === 'expanded' && n2.height < n.height - 100 && n2.height < 200, JSON.stringify([n.height, n2.height]))
+    // 撤销:撤掉的是"内容修改",不是"贴合高度"
+    await ev(`document.querySelector('.wb-canvas').focus(); window.__wb.store.undo()`); await sleep(700)
+    const n3 = await L(); check('一步撤销:内容回到上一版,高度随之重新贴合(贴合本身没有占用撤销步)', n3.text.includes('新的第 70 行') && n3.height > n2.height + 100, JSON.stringify([n2.height, n3.height])) }
+  await ev(`window.__wb.store.select(['L'])`); await sleep(150)
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="default"]').click()`); await sleep(250)
+  { const n = await L(); check('展开 → 默认:恢复为展开前的默认高度(= 最近一次手动设置的高度),折叠字段清干净', !('fold' in n) && !('baseHeight' in n) && n.height === defaultBeforeExpand && n.height > 0, JSON.stringify([n.fold, n.baseHeight, n.height, defaultBeforeExpand])) }
+  // 底部快捷按钮
+  await reset([T('L', 100, 100, 300, 260, { title: '长文', text: LONG })], [{ id: 'le', fromNode: 'L', toNode: 'S' }].slice(0, 0)); await sleep(300)
+  await ev(`(${fb('fold.expand')}).click()`); await sleep(300)
+  check('底部"展开"快捷按钮:等于切到展开状态', (await L()).fold === 'expanded')
+  await ev(`(${fb('fold.restore')}).click()`); await sleep(250)
+  check('底部"恢复默认高度"快捷按钮:回到默认', !('fold' in (await L())) && (await L()).height === 260)
+  // 内容很短的卡片:展开 = 缩到刚好容纳内容
+  await reset([T('L', 100, 100, 300, 400, { title: '短卡', text: '一行内容' })]); await sleep(300)
+  await ev(`window.__wb.store.select(['L'])`); await sleep(150)
+  await ev(`document.querySelector('.wb-ctxbar [data-fold="expanded"]').click()`); await sleep(300)
+  { const n = await L(); check('内容很少的卡片展开:缩到刚好容纳内容(不留大片空白)', n.fold === 'expanded' && n.height < 130 && n.baseHeight === 400, JSON.stringify([n.fold, n.height, n.baseHeight])) }
+  // 空卡片:量不出内容(没有正文节点)时展开不可用,不会把高度改成怪值
+  await reset([T('L', 100, 100, 300, 300, { text: '' })]); await sleep(300)
+  await ev(`window.__wb.store.select(['L'])`); await sleep(150)
+  { const dis = await ev(`document.querySelector('.wb-ctxbar [data-fold="expanded"]')?.disabled`)
+    await ev(`document.querySelector('.wb-ctxbar [data-fold="expanded"]')?.click()`); await sleep(200)
+    const n = await L(); check('空卡片:展开不会把高度改成怪值(要么按钮禁用且高度不变,要么高度仍合法)', dis === true ? n.height === 300 && !n.fold : Number.isFinite(n.height) && n.height >= 40, JSON.stringify([dis, n.height, n.fold])) }
+  // 旧数据兼容:旧版本写入的折叠卡片
+  await reset([T('L', 100, 100, 300, 112, { title: '旧折叠', text: LONG, collapsed: true, expandedHeight: 380 })]); await sleep(300)
+  check('旧数据(collapsed:true)按折叠态显示:内容裁切、底部有按钮', await ev(`document.querySelector('[data-wb-node="L"] .wb-body').classList.contains('is-collapsed')`) && await ev(`!!(${fb('fold.restore')})`))
+  await ev(`(${fb('fold.restore')}).click()`); await sleep(250)
+  { const n = await L(); check('旧数据点"恢复默认高度":回到旧记录的高度,旧字段清干净', n.height === 380 && !('collapsed' in n) && !('expandedHeight' in n) && !('fold' in n), JSON.stringify(n)) }
+  await reset([T('L', 100, 100, 300, 260, { title: '长文', text: LONG }), T('S', 600, 100, 300, 160, { title: '短', text: '一行' }), T('Z', 100, 500, 200, 90, { text: '框外' })], [{ id: 'le', fromNode: 'L', toNode: 'S' }]); await sleep(300)
+  await ev(`window.__wb.store.select(['L'])`); await sleep(150)
   // 详情面板
   await ev(`document.querySelector('.wb-ctxbar button[title="detail.open"]').click()`); await sleep(400)
   check('点"详情"在右侧打开完整编辑器', await ev(`!!document.querySelector('.wb-detail .wb-md-detail.ProseMirror')`) && (await ev('window.__wb.store.getState().detail')) === 'L')

@@ -8,7 +8,7 @@ import { OpError } from '../core/ops.js'
 import { summarize } from '../core/model.js'
 import { searchBoard } from '../core/view.js'
 import { imageDimensions } from './imagesize.js'
-import { collapsePatch, expandPatch } from '../core/content.js'
+import { collapsePatch, restorePatch } from '../core/content.js'
 import { groupOps, ungroupOps } from '../core/cluster.js'
 import { alignOps, distributeOps, fitGroupOps, wrapInGroupOps } from '../core/arrange.js'
 import { uid } from '../core/model.js'
@@ -46,7 +46,8 @@ export function createService(store, emit) {
       else if (a.kind === 'group') ops = groupOps(board, a.ids ?? [], uid('c'))
       else if (a.kind === 'ungroup') ops = ungroupOps(board, a.ids ?? [])
       else if (a.kind === 'collapse' || a.kind === 'expand') {
-        const f = a.kind === 'collapse' ? collapsePatch : expandPatch
+        // Host 没有 DOM,量不出内容高度:agent 的 expand 语义是"回到默认高度"(取消折叠),按内容撑高由用户在界面里做
+        const f = a.kind === 'collapse' ? collapsePatch : restorePatch
         ops = board.nodes.filter((n) => (a.ids ?? []).includes(n.id) && n.type === 'text').map((n) => ({ n, p: f(n) })).filter((x) => x.p).map(({ n, p }) => ({ op: 'updateNode', id: n.id, patch: p }))
       }
       else throw new StoreError('bad-input', `unknown arrange kind "${a.kind}"`)

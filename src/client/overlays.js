@@ -11,7 +11,8 @@ import { Icon } from './icons.js'
 import { alignOps, distributeOps, fitGroupOps, wrapInGroupOps, topLevel, layoutUnits } from '../core/arrange.js'
 import { groupOps, ungroupOps, clusterPath, expandToUnits } from '../core/cluster.js'
 import { uid } from '../core/model.js'
-import { restoreRatioPatch, togglePatch } from '../core/content.js'
+import { restoreRatioPatch, foldState, setFoldPatch } from '../core/content.js'
+import { measureContentHeight } from './nodes.js'
 import { placeFloating, worldToScreen, searchBoard, focusViewport, minimapLayout, toMap, viewportFromMap, viewportWorldRect } from '../core/view.js'
 
 const h = React.createElement
@@ -73,6 +74,20 @@ export function ContextBar({ store, state, size, t, dragging, transport, onRepla
   const btn = (key, fn, disabled) => h('button', { key, className: 'wb-btn wb-btn-icon', title: t('arrange.' + key), 'aria-label': t('arrange.' + key), disabled, onClick: fn }, h(Icon, { name: key }))
   const swatches = (current, set) => h('span', { className: 'wb-swatches' }, COLOR_NAMES.map((c) => h('button', { key: c, title: c, className: 'wb-swatch' + (current === c ? ' is-on' : ''), style: { background: COLORS[c].dot }, onClick: () => set(c) })))
 
+  // 三选一:折叠 | 默认 | 展开。当前状态高亮;"展开"需要量出内容高度(量不出来则该按钮不可用)
+  const foldSwitch = (n) => {
+    const cur = foldState(n).fold
+    const el = document.querySelector('[data-wb-node="' + n.id + '"] .wb-body')
+    const content = measureContentHeight(el, n)
+    const opt = (target, icon, label, disabled) => h('button', {
+      key: target, className: 'wb-btn wb-btn-icon' + (cur === target ? ' is-on' : ''), title: label, 'aria-label': label, 'aria-pressed': cur === target, 'data-fold': target, disabled,
+      onClick: () => { const p = setFoldPatch(n, target, content); if (p) run([{ op: 'updateNode', id: n.id, patch: p }]) },
+    }, h(Icon, { name: icon }))
+    return h('span', { key: 'fd', className: 'wb-arrange-group', role: 'group', 'aria-label': t('fold.group') },
+      opt('collapsed', 'fold-collapsed', t('fold.collapse'), false),
+      opt('default', 'fold-default', t('fold.default'), false),
+      opt('expanded', 'fold-expanded', t('fold.expand'), content == null))
+  }
   const parts = []
   const shapes = sel.filter((n) => n.type === 'shape')
   const shapeOnly = sel.length > 0 && shapes.length === sel.length
@@ -123,7 +138,7 @@ export function ContextBar({ store, state, size, t, dragging, transport, onRepla
   } else if (one && one.type === 'text') {
     parts.push(
       h('button', { key: 'dt', className: 'wb-btn wb-btn-label', title: t('detail.open'), onClick: () => store.openDetail(one.id) }, h(Icon, { name: 'detail' }), t('detail.open')),
-      h('button', { key: 'fd', className: 'wb-btn wb-btn-icon', title: one.collapsed ? t('fold.expand') : t('fold.collapse'), 'aria-label': one.collapsed ? t('fold.expand') : t('fold.collapse'), onClick: () => { const p = togglePatch(one); if (p) run([{ op: 'updateNode', id: one.id, patch: p }]) } }, h(Icon, { name: one.collapsed ? 'unfold' : 'fold' })),
+      foldSwitch(one),
       h('button', { key: 'w', className: 'wb-btn wb-btn-label', title: t('arrange.wrap'), onClick: wrap }, h(Icon, { name: 'wrap' }), t('arrange.wrap')))
   } else if (one) {
     parts.push(h('button', { key: 'w', className: 'wb-btn wb-btn-label', title: t('arrange.wrap'), onClick: wrap }, h(Icon, { name: 'wrap' }), t('arrange.wrap')))

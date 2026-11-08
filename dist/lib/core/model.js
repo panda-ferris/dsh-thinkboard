@@ -113,6 +113,8 @@ export function summarize(board, { full = false } = {}) {
       if (color) o.color = color
       if (file) o.file = file
       if (cluster) o.cluster = cluster
+      if (n.fold) { o.fold = n.fold; if (Number.isFinite(n.baseHeight)) o.baseHeight = Math.round(n.baseHeight) }   // 折叠/展开状态与默认高度
+      else if (n.collapsed === true) o.fold = 'collapsed'                                                                    // 旧数据按折叠呈现
       if (typeof n.text === 'string') o.text = full ? n.text : clip(n.text, 200)
       return o
     }),
