@@ -44,6 +44,19 @@
       },
       "versions": [
         {
+          "version": "0.2.1",
+          "publishTimestamp": 1794147998,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/panda-ferris/dsh-thinkboard",
+            "commit": "b6ab1b9a20f5ef13dd5a49d39feacd8a07813571",
+            "path": "dist"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.1 <0.3.0-0"
+          }
+        },
+        {
           "version": "0.2.0",
           "publishTimestamp": 1794145842,
           "source": {
