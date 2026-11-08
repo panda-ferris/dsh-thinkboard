@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 — 2026-11-08
+
+- **Fix: could not install on dsh 0.2.2-rc.1.** `engines.dsh` was `>=0.2.1-rc.1 <0.2.2-0`, so the market rejected the plugin on 0.2.2. The plugin itself already ran fine on 0.2.2-rc.1 (host routes and panel load); only the declared range was wrong. It is now `>=0.2.1-rc.1 <0.3.0-0`, so the whole 0.2.x line installs, including its prereleases. A 0.3 release will need a new plugin version.
+
 ## 0.2.0 — 2026-11-08
 
 First version published to the plugin market. Everything below is what changed since the 0.1.0 snapshot.

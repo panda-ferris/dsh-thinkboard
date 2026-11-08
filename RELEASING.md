@@ -31,3 +31,4 @@ Why `dist/` is committed: the market installs the commit as-is, so users need no
 - A published version is immutable. `make-index.mjs` refuses to point an already-released version at a different commit; fix forward with a new version.
 - The index is generated from a **clean working tree**, so it always points at the exact commit you tested.
 - `engines.dsh` in `package.json` is what the market uses to decide compatibility — widen it only after testing on that dsh version.
+- dsh judges `engines.dsh` with `semver.satisfies(version, range, { includePrerelease: true })`, so a prerelease such as `0.2.2-rc.1` is accepted as long as the width of the range covers it — keep the upper bound at the next minor (`<0.3.0-0`) rather than the next patch, or every dsh prerelease will block installs.

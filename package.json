@@ -1,6 +1,6 @@
 {
   "name": "dsh-thinkboard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "devDependencies": {
     "@tiptap/core": "3.32.2",
@@ -46,6 +46,6 @@
     "knowledge-management"
   ],
   "engines": {
-    "dsh": ">=0.2.1-rc.1 <0.2.2-0"
+    "dsh": ">=0.2.1-rc.1 <0.3.0-0"
   }
 }

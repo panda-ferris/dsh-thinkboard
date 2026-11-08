@@ -27,7 +27,7 @@ ThinkBoard is distributed through a dsh **plugin market index**.
    https://panda-ferris.github.io/dsh-thinkboard/index.json
    ```
 
-2. Find **ThinkBoard** and install it. It needs dsh `>=0.2.1-rc.1 <0.2.2-0`; the market shows compatibility.
+2. Find **ThinkBoard** and install it. It needs dsh `>=0.2.1-rc.1 <0.3.0-0`; the market shows compatibility.
 
 No build step and no install scripts: the repository ships the built package under `dist/`.
 
