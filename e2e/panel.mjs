@@ -10,6 +10,7 @@ await build({ entryPoints: ['e2e/harness.jsx'], bundle: true, outfile: 'e2e/out/
 await writeFile('e2e/out/index.html', '<!doctype html><meta charset="utf-8"><body style="margin:0"><div id="root"></div><script src="bundle.js"></script>')
 
 const port = 9470
+try { const k = spawn('caffeinate', ['-dimsu', '-w', String(process.pid)], { stdio: 'ignore' }); k.on('error', () => {}) } catch { /* 非 macOS:跳过 */ }   // 阻止休眠,原因见 run.mjs
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, '--user-data-dir=/tmp/wb-chrome-panel', '--window-size=1280,800', 'about:blank'], { stdio: 'ignore' })
 let ws, id = 0; const pending = new Map(); const errors = []
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })

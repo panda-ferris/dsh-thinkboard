@@ -22,6 +22,10 @@ const pickPort = async () => {
 }
 const port = await pickPort()
 const profileDir = mkdtempSync(join(tmpdir(), 'wb-chrome-'))
+// 运行期间阻止系统与显示器休眠。实测:机器休眠/降频时无头浏览器会被系统整体挂起(CPU 0%、命令全部超时),
+// 在 caffeinate 下同一套测试连续稳定通过。非 macOS 或没有 caffeinate 时静默跳过。
+let keepAwake = null
+try { keepAwake = spawn('caffeinate', ['-dimsu', '-w', String(process.pid)], { stdio: 'ignore' }); keepAwake.on('error', () => { keepAwake = null }) } catch { keepAwake = null }
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, '--window-size=1200,800',
   // 禁止后台/遮挡节流:机器忙、锁屏、窗口被遮挡时,系统会把没有可见窗口的浏览器页面挂起,表现为页面突然不响应(CPU 0%),与产品无关
   '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion', 'about:blank'], { stdio: 'ignore' })
@@ -38,6 +42,13 @@ const until = async (expr, ms = 3000) => { const t0 = Date.now(); while (Date.no
 const onlyArg = process.argv.find((a) => a.startsWith('--only='))
 const ONLY = onlyArg ? onlyArg.slice(7).split(',').map((x) => x.trim()).filter(Boolean) : null
 const want = (title) => !ONLY || ONLY.some((k) => title.includes(k))
+if (ONLY) {
+  // 启动浏览器之前先校验:没有任何段落匹配的关键词(多半是拼写错误)直接报错退出,而不是静默跑完全部老段落后报"通过"
+  const { readFileSync } = await import('node:fs')
+  const titles = [...readFileSync(new URL(import.meta.url), 'utf8').matchAll(/^  if \(want\('([^']+)'\)\)/gm)].map((m) => m[1])
+  const unknown = ONLY.filter((k) => !titles.some((t) => t.includes(k)))
+  if (unknown.length) { console.error(`--only 的关键词没有匹配任何可过滤的测试段落:${unknown.join(', ')}\n可过滤的段落:\n  ${titles.join('\n  ')}`); process.exit(2) }
+}
 // 命令超时时的诊断:请求调试器暂停主线程并取调用栈(几秒内没有回应 = 主线程不在执行 JS,可能在等系统/GPU/合成器)。
 let diagDone = false
 async function hangDiag(method) {
@@ -1050,7 +1061,9 @@ try {
     await mouse('mouseReleased', sx + 400, sy, { modifiers: 1 }); await sleep(250)
     const b = await board(); const g = b.nodes.find((n) => n.id === 'G3'), n = b.nodes.find((n) => n.id === 'in1')
     check('拖出后卡片不再属于框', !(n.x + n.width / 2 > g.x && n.x + n.width / 2 < g.x + g.width))
-    check('成员数归零', (await ev(`document.querySelector('[data-wb-node="G3"] .wb-group-count')?.textContent`)) === undefined || (await ev(`document.querySelector('[data-wb-node="G3"] .wb-group-count')?.textContent`)) === '0' || true) }
+    // 成员数为 0 时标签的真实表现:先看现状再断言(不再写"任意结果都通过"的条件)
+    const cnt = await ev(`(()=>{const e=document.querySelector('[data-wb-node="G3"] .wb-group-count');return e?e.textContent:null})()`)
+    check('成员数归零:不再显示成员数标签(或显示 0)', cnt === null || cnt === '0', JSON.stringify(cnt)) }
   // 图形拖进框
   await reset([GT('G4', 100, 100, 500, 360, '图形框'), SH('sp', 'diamond', 750, 200)]); await ev(`window.__wb.store.setViewport({x:0,y:0,k:1})`); await sleep(200)
   { const c = await node('sp'); const sx = c.x + 80, sy = c.y + 50
@@ -1347,7 +1360,14 @@ try {
     check('移动组合时,连到成员的连线跟随', (await ev(`document.querySelector('.wb-edge-line').getAttribute('d')`)) !== d0) }
   // 小地图 / 导出 / 搜索
   { const r = await ev(`(async()=>{try{const blob=await window.__wb.renderPng(document.querySelector('.wb-world'),window.__wb.store.getState().board,{background:'#fff',scale:1});return {ok:true,size:blob.size}}catch(e){return {ok:false,err:String(e.message)}}})()`)
-    check('含组合的白板导出 PNG 不带外包盒与手柄', r.ok && r.size > 500 && await ev(`!document.querySelector('.wb-world .wb-unitbox') || true`), JSON.stringify(r)) }
+    check('含组合的白板导出 PNG 成功(非空)', r.ok && r.size > 500, JSON.stringify(r))
+    // 导出是在克隆里删除交互装饰。检查页面上的原节点证明不了什么,所以直接对"导出用的克隆"断言:
+    // 选中组合(出现外包盒与手柄)→ 克隆 → 去装饰 → 克隆里不能再有外包盒、手柄、连接点、选中高亮
+    await ev(`window.__wb.store.select(['ea','eb'])`); await sleep(200)
+    const before = await ev(`document.querySelectorAll('.wb-world .wb-unitbox, .wb-world .wb-handle, .wb-world .wb-anchor').length`)
+    const strip = await ev(`(()=>{const clone=document.querySelector('.wb-world').cloneNode(true);const n=window.__wb.stripInteractive(clone);return {removed:n,left:clone.querySelectorAll('.wb-unitbox,.wb-handle,.wb-anchor,.wb-guides,.wb-marquee,[data-wb-ui]').length,selected:clone.querySelectorAll('.is-selected').length}})()`)
+    check('页面上选中组合时确有外包盒/手柄(前提成立)', before > 0, String(before))
+    check('导出用的克隆:外包盒、手柄、连接点、选中高亮全部去除', strip.removed > 0 && strip.left === 0 && strip.selected === 0, JSON.stringify(strip)) }
   // 框选整组
   await fresh(); await ev(`window.__wb.store.select(['ca','cb'])`); await ev(`document.querySelector('.wb-ctxbar button[aria-label="cluster.group"]').click()`); await sleep(200)
   { await ev(`window.__wb.store.select([])`); await sleep(80)

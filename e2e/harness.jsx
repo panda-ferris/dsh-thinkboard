@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { Canvas } from '../src/client/canvas.js'
 import { Toolbar, Panel } from '../src/client/panel.js'
 import { DetailPane } from '../src/client/detail.js'
-import { renderPng, resolveBackground } from '../src/client/export.js'
+import { renderPng, resolveBackground, stripInteractive } from '../src/client/export.js'
 import { createStore } from '../src/client/store.js'
 import { configureAssetUrls } from '../src/client/boardimage.js'
 import { createFocusBus } from '../src/client/focusbus.js'
@@ -76,7 +76,7 @@ window.__panel = {
   },
 }
 const params = new URLSearchParams(location.search)
-window.__wb = { store, errors, renderPng, resolveBackground, get disk() { return disk }, reset(nodes, edges = []) { disk = createBoard({ id: 'b1', title: 'e2e' }); disk = applyOps(disk, [...nodes.map((node) => ({ op: 'addNode', node })), ...edges.map((edge) => ({ op: 'addEdge', edge }))]).board; rev++; return store.load('b1') } }
+window.__wb = { store, errors, renderPng, resolveBackground, stripInteractive, get disk() { return disk }, reset(nodes, edges = []) { disk = createBoard({ id: 'b1', title: 'e2e' }); disk = applyOps(disk, [...nodes.map((node) => ({ op: 'addNode', node })), ...edges.map((edge) => ({ op: 'addEdge', edge }))]).board; rev++; return store.load('b1') } }
 const clipboard = { text: '' }
 Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (x) => { clipboard.text = x }, readText: async () => clipboard.text }, configurable: true })
 window.__clip = clipboard

@@ -32,6 +32,18 @@ export function exportScale(w, h, want = 2) {
   return Math.max(0.1, Math.min(want, MAX_SIDE / w, MAX_SIDE / h))
 }
 
+/**
+ * 去掉克隆里的交互装饰:选择高亮、手柄、连接点、对齐线、框选、组合外包盒(带 data-wb-ui)。
+ * 单独导出是为了能直接对"导出用的克隆"做断言——页面上的原节点本来就有这些装饰,检查原节点证明不了导出干净。
+ * 返回被移除的元素个数。
+ */
+export function stripInteractive(root) {
+  let n = 0
+  for (const el of root.querySelectorAll('.wb-handle,.wb-anchor,.wb-guides,.wb-marquee,.wb-unitbox,[data-wb-ui]')) { el.remove(); n++ }
+  for (const el of root.querySelectorAll('.is-selected,.is-editing')) el.classList.remove('is-selected', 'is-editing')
+  return n
+}
+
 /** 返回 PNG Blob。world 为 .wb-world 元素;background 为画布背景色(CSS 颜色)。 */
 export async function renderPng(world, board, { background, scale = 2 } = {}) {
   const b = contentBounds(board)
@@ -45,9 +57,7 @@ export async function renderPng(world, board, { background, scale = 2 } = {}) {
     for (const p of cs) css += `${p}:${cs.getPropertyValue(p)};`
     dst[i].setAttribute('style', css)
   })
-  // 去掉交互装饰:选择高亮、手柄、连接点、对齐线、框选
-  for (const el of clone.querySelectorAll('.wb-handle,.wb-anchor,.wb-guides,.wb-marquee,[data-wb-ui]')) el.remove()
-  for (const el of clone.querySelectorAll('.is-selected,.is-editing')) el.classList.remove('is-selected', 'is-editing')
+  stripInteractive(clone)
   // 嵌套的 foreignObject(连线文字)在外层 foreignObject 里无法栅格化:改写成 SVG 原生的 rect + text。
   // 注意:样式要从"原节点"(仍在页面里)取,克隆节点已脱离文档,getComputedStyle 读不到值。
   const srcLabels = [...world.querySelectorAll('foreignObject')]
