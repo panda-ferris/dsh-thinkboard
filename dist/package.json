@@ -1,6 +1,6 @@
 {
   "name": "dsh-thinkboard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "ThinkBoard for DeepSeek Harness: an infinite canvas for Markdown and image cards, frames, flowchart shapes, and labeled connections. Boards are plain JSON files, and the built-in chat agent can read and edit them.",
   "license": "MIT",

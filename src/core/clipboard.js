@@ -1,6 +1,6 @@
 // 复制粘贴的纯逻辑(不依赖 DOM / 编辑器,可在 Node 里测试):
 //   1. looksLikeMarkdown —— 一段纯文本是不是 Markdown 源码(决定粘贴时是否按 Markdown 解析)
-//   2. 粘贴 HTML 前的字符串级预处理(KM 死链接、飞书背景色高亮)
+//   2. 粘贴 HTML 前的字符串级预处理(wiki 死链接、飞书背景色高亮)
 //   3. 复制出去的 HTML:把我们自己的结构降级成外部软件都认识的写法(只用内联样式)
 
 // ---------------- 1. 是不是 Markdown ----------------
@@ -46,7 +46,7 @@ export function looksLikeMarkdown(text) {
 const ASSET_REF = /^assets\/[A-Za-z0-9._-]+$/
 
 /**
- * KM 把图片导出成 `[图片: image.png](source_id:…)` 这种内部引用,链接是死的。
+ * 内部 wiki 把图片导出成 `[图片: image.png](source_id:…)` 这种内部引用,链接是死的。
  * 对 HTML:<a href="source_id:...">[图片: x]</a> → 一段不可点击的占位文字。
  */
 export function neutralizeDeadLinks(html) {

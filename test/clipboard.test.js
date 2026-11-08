@@ -38,7 +38,7 @@ test('looksLikeMarkdown: 有序列表的 1) 写法、缩进列表', () => {
   assert.equal(looksLikeMarkdown('1) 甲\n2) 乙'), true); assert.equal(looksLikeMarkdown('- 一\n  - 二'), true)
 })
 
-test('neutralizeDeadLinks: KM 的 source_id 链接变成不可点击的占位文字', () => {
+test('neutralizeDeadLinks: 内部 wiki 的 source_id 链接变成不可点击的占位文字', () => {
   const out = neutralizeDeadLinks('<p><a href="source_id:6ed8f3d5-6bd3">[图片: image.png]</a></p>')
   assert.ok(!out.includes('href') && out.includes('[图片: image.png(来自外部文档,无法导入)]'), out)
 })

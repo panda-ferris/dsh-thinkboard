@@ -39,7 +39,7 @@ test('只要有一个单元格复杂,整张表都存成 HTML', () => {
   assert.ok(md.startsWith('\n<table>') && md.endsWith('</table>\n'))
 })
 
-test('HTML 里保留嵌套列表的层级(KM / 飞书粘贴的场景)', () => {
+test('HTML 里保留嵌套列表的层级(内部 wiki / 飞书粘贴的场景)', () => {
   const t = table(row(head(p('a'))), row(cell(
     p('实验看板'),
     ul(li(p('RTA 实验'))),

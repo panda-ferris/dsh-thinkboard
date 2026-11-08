@@ -1758,7 +1758,7 @@ try {
     check('画布缩放 50% 时同样生效(缓冲带按屏幕像素计)', live.drop && live.w > g0.width, JSON.stringify(live))
     await mouse('mouseReleased', p0.x + dxScreen, p0.y, { modifiers: 1 }); await sleep(200) }
 
-  console.log('表格:单元格里的列表在存盘与重新渲染后不丢(KM / 飞书粘贴场景)')
+  console.log('表格:单元格里的列表在存盘与重新渲染后不丢(内部 wiki / 飞书粘贴场景)')
   { // 往返:HTML 粘贴 → 编辑器 → 存盘的 Markdown → 重新读入 → 结构应一致
     const mdOf = async (id) => (await board()).nodes.find((n) => n.id === id).text
     const render = (id) => ev(`document.querySelector('[data-wb-node="${id}"] .wb-body')?.innerHTML ?? ''`)
@@ -2556,7 +2556,7 @@ try {
     { const r = await pasted({ html: '<div class="callout" data-callout="tip"><div class="callout-title"><div class="callout-title-inner">Tip</div></div><div class="callout-content"><p>x</p></div></div>', text: 'Tip\nx' })
       check('  …标题等于类型名时不重复写标题', /^> \[!tip\]\n> x/.test(r), JSON.stringify(r)) }
     { const r = await pasted({ html: '<p><a href="source_id:6ed8f3d5-6bd3">[图片: image.png]</a></p>', text: '[图片: image.png]' })
-      check('KM 的图片死链接 → 占位文字,不留死链接', !/source_id/.test(r) && /来自外部文档,无法导入/.test(r) && /image\.png/.test(r), JSON.stringify(r)) }
+      check('内部 wiki 的图片死链接 → 占位文字,不留死链接', !/source_id/.test(r) && /来自外部文档,无法导入/.test(r) && /image\.png/.test(r), JSON.stringify(r)) }
     { const r = await pasted({ html: '<h2>标题</h2><ul><li>一<ul><li>二</li></ul></li></ul><table><tr><th>甲</th><th>乙</th></tr><tr><td>1</td><td>2</td></tr></table>', text: '标题 一 二' })
       check('标准网页 HTML:标题、嵌套列表、表格仍正确(没有被预处理破坏)', /^## 标题/.test(r) && /- 一\n  - 二/.test(r) && /\| 甲\s+\| 乙\s+\|/.test(r), JSON.stringify(r)) }
     { const r = await pasted({ html: '<p>正常 <a href="https://a.com">链接</a> 保留</p>', text: '正常 链接 保留' })
@@ -2572,7 +2572,7 @@ try {
     check('text/html:高亮块变成带颜色的引用块(没有我们的 class,外部软件也能显示)', /<blockquote[^>]*style="[^"]*border-left:4px solid #f97316/.test(copied.html) && !/class="[^"]*wb-callout/.test(copied.html) && /注意/.test(copied.html), copied.html.slice(0, 260))
     check('text/html:表格带内联边框(外部软件不依赖 class 也看得出是表格)', /<table[^>]*border="1"/.test(copied.html) && /<td style="border:1px solid/.test(copied.html) && /<th style="[^"]*background:#f3f3f3/.test(copied.html) && !/<colgroup/.test(copied.html))
     check('text/html:高亮带内联底色', /<mark style="background-color:#fff176">高亮<\/mark>/.test(copied.html))
-    check('text/html:多级列表保持 Tiptap 默认写法 <li><p>…</p>[嵌套列表]</li>(曾试过解开 <p> 适配 KM,实测 KM 反而把列表并成一行,已撤回)', /<li><p>一<\/p><ul><li><p>二<\/p><\/li><\/ul><\/li>/.test(copied.html), copied.html.slice(copied.html.indexOf('<ul>'), copied.html.indexOf('<ul>') + 120))
+    check('text/html:多级列表保持 Tiptap 默认写法 <li><p>…</p>[嵌套列表]</li>(曾试过解开 <p> 适配某类内部 wiki,实测反而把列表并成一行,已撤回)', /<li><p>一<\/p><ul><li><p>二<\/p><\/li><\/ul><\/li>/.test(copied.html), copied.html.slice(copied.html.indexOf('<ul>'), copied.html.indexOf('<ul>') + 120))
     check('  …有序多级列表同样保持原写法', await (async () => {
       await open('1. item 1\n   1. sub 1\n   2. sub 2\n2. item 2')
       const c2 = await ev(`(()=>{const ed=document.querySelector('[data-wb-node="s"] .ProseMirror');ed.focus();ed.editor.commands.selectAll();const dt=new DataTransfer();ed.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true}));return dt.getData('text/html')})()`)

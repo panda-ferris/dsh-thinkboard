@@ -369,7 +369,7 @@ function useSlash({ t, boardId, transport, edRef }) {
       ed.chain().focus().insertContent(text, { contentType: 'markdown' }).run()
       return true
     },
-    // 粘贴 HTML 前的预处理:KM 的死链接换成占位文字、飞书/Word 的背景色高亮转成 <mark>
+    // 粘贴 HTML 前的预处理:内部 wiki 的死链接换成占位文字、飞书/Word 的背景色高亮转成 <mark>
     transformPastedHTML: (html) => preprocessPastedHtml(html) || html,
     handleDrop: (_view, e) => {
       const files = [...(e.dataTransfer?.files ?? [])].filter(isImageFile)

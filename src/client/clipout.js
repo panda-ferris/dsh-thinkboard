@@ -1,4 +1,4 @@
-// 复制出去的 HTML:把编辑器里的结构降级成外部软件(飞书、KM、Word、Obsidian)都认识的写法。
+// 复制出去的 HTML:把编辑器里的结构降级成外部软件(飞书、内部 wiki、Word、Obsidian)都认识的写法。
 // 做法:拿到 ProseMirror 序列化出的 DOM 片段,就地改写(只改外观相关的部分),不动文字内容。
 //   - 高亮块:用引用块 + 内联样式(颜色、左边框、底色)
 //   - 表格:加边框和表头底色的内联样式(外部软件常常丢弃 class,没有边框的表格粘过去看不出是表格)
@@ -58,8 +58,8 @@ export function externalize(root) {
     const alt = img.getAttribute('alt') || '图片'
     img.replaceWith(doc.createTextNode(`[${alt}]`))
   })
-  // 关于列表:曾尝试把 <li><p>文字</p></li> 解开成 <li>文字</li> 以适配 KM,实测 KM 反而把整个多级列表并成一行
-  // (比不解开更差),已撤回。保持 Tiptap 默认的 <li><p>…</p>[嵌套列表]</li>:飞书、本应用能还原层级,KM 会把各项当作段落。
+  // 关于列表:曾尝试把 <li><p>文字</p></li> 解开成 <li>文字</li> 以适配内部 wiki,实测反而把整个多级列表并成一行
+  // (比不解开更差),已撤回。保持 Tiptap 默认的 <li><p>…</p>[嵌套列表]</li>:飞书、本应用能还原层级,而它会把各项当作段落。
   // 5) 清理只对编辑器有意义的属性
   // data-pm-slice 是 ProseMirror 在序列化之后才加到第一个顶层元素上的(用于"粘回本编辑器时保留切片边界"),
   // 这里清不掉也不必清:它是无害的普通属性,外部软件会忽略;粘回我们自己的编辑器时它还有用。
@@ -86,7 +86,7 @@ export function wrapSerializer(base) {
  * 编辑器的复制行为:
  *   text/plain —— 选区对应的 Markdown 源码(而不是 Tiptap 默认的"把文字拼起来"):
  *                 粘到 Obsidian、代码编辑器、IM 里能还原标题、列表、表格、高亮块。
- *   text/html  —— 套 externalize:高亮块变带底色的引用、表格带边框、小图片内嵌,飞书/KM/Word 粘过去看得出结构。
+ *   text/html  —— 套 externalize:高亮块变带底色的引用、表格带边框、小图片内嵌,飞书/内部 wiki/Word 粘过去看得出结构。
  * 优先级高于 Tiptap 自带的 clipboardTextSerializer(它先注册,同一个 prop 取第一个返回值)。
  */
 export const ClipboardOut = Extension.create({

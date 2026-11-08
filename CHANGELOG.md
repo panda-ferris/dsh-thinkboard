@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-08
 
-Everything since 0.1.0. Not yet published; the release bundle and index are regenerated when a version is cut (see `RELEASING.md`).
+First version published to the plugin market. Everything below is what changed since the 0.1.0 snapshot.
 
 ### Editor
 - **Slash menu** (`/`): table with a size picker, image upload (also paste and drop), headings, lists, task list, quote, callout, code block, divider. Rendered in a portal so it does not drift or move the card on a zoomed canvas.
@@ -22,14 +22,14 @@ Everything since 0.1.0. Not yet published; the release bundle and index are rege
 
 ### Copy and paste
 - Pasting **Markdown source** is parsed as Markdown (headings, nested lists, callouts, `==highlight==`, tables); ordinary text is left alone.
-- Pasting **rich text**: background-coloured spans become highlights, Obsidian reading-mode callouts become callouts, KM image links that cannot be resolved become placeholder text.
+- Pasting **rich text**: background-coloured spans become highlights, Obsidian reading-mode callouts become callouts, wiki image links that cannot be resolved become placeholder text.
 - **Copying** writes Markdown to `text/plain` and a self-styled HTML version to `text/html` (callouts become coloured quotes, tables get borders). Copying and pasting within ThinkBoard restores callouts with their type and title.
 
 ### Agent
 - `thinkboard_edit`: `arrange` with `collapse` / `expand` follows the three-state model (`expand` returns a card to its default height); node `fold` (`collapsed` | `expanded`) and `baseHeight` are validated. `thinkboard_read` reports `fold` and `baseHeight`. The tool text documents that tables with block content are stored as single-line `<table>` HTML.
 
 ### Known limitations
-- Pasting into KM flattens multi-level lists; pasting from Feishu/Lark may lose blank lines between paragraphs; table header styling is not kept when pasting between KM / Feishu and ThinkBoard.
+- Pasting into a corporate wiki flattens multi-level lists; pasting from Feishu/Lark may lose blank lines between paragraphs; table header styling is not kept when pasting between a corporate wiki, Feishu/Lark, and ThinkBoard.
 
 ### Internal
 - Browser tests: isolated browser profile and debugging port per run, `--only=` section filter, hang diagnostics (main-thread call stack and process state on timeout), and the machine is kept awake while they run, because a sleeping machine suspends the headless browser. The suite has 781 canvas checks, 80 shell checks, and 10 sandbox checks, plus 395 unit tests.
